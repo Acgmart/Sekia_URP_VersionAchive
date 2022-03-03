@@ -4,13 +4,18 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [13.1.6] - 2022-01-14
+
+### Fixed
+- Fixed max light count cpu/gpu mismatch in Editor with Android target. [case 1392965](https://issuetracker.unity3d.com/product/unity/issues/guid/1392965/)
+- Fixed some rendering inconsistencies when using Decals.
+
 ## [13.1.5] - 2021-12-17
 
 ### Fixed
 - Fixed a depth non-clear in XR due to wrong depth slice being checked.
-
-## Fixed
 - Fixed decal compilation issue on mac.
+- Fixed incorrect lighting attenuation on Editor when build target is a mobile platform [case 1387142]
 
 ## [13.1.4] - 2021-12-04
 
@@ -23,6 +28,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 - Removed the name input for the SSAO and Screen Space Shadows renderer features.
+- Re-added the menu button to be able to convert selected materials.
 
 ### Fixed
 - Fix mismatch on some platforms between Editor-side and Runtime-side implementations of UnityEngine.Rendering.Universal.DecalRendererFeature.IsAutomaticDBuffer() [case 1364134]
