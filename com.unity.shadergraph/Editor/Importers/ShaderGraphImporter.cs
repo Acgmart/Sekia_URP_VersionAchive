@@ -19,7 +19,7 @@ using Object = System.Object;
 namespace UnityEditor.ShaderGraph
 {
     [ExcludeFromPreset]
-    [ScriptedImporter(126, Extension, -902)]
+    [ScriptedImporter(127, Extension, -902)]
     class ShaderGraphImporter : ScriptedImporter
     {
         public const string Extension = "shadergraph";
@@ -190,7 +190,7 @@ Shader ""Hidden/GraphErrorShader2""
 
             if (shader != null)
             {
-                Material material = new Material(shader) { name = Path.GetFileNameWithoutExtension(path) + " Material" };
+                Material material = new Material(shader) { name = "Material/" + Path.GetFileNameWithoutExtension(path) };
                 ctx.AddObjectToAsset("Material", material);
             }
 
@@ -198,11 +198,12 @@ Shader ""Hidden/GraphErrorShader2""
             ctx.AddObjectToAsset("MainAsset", mainObject, texture);
             ctx.SetMainObject(mainObject);
 
+            var graphDataReadOnly = new GraphDataReadOnly(graph);
             foreach (var target in graph.activeTargets)
             {
                 if (target is IHasMetadata iHasMetadata)
                 {
-                    var metadata = iHasMetadata.GetMetadataObject();
+                    var metadata = iHasMetadata.GetMetadataObject(graphDataReadOnly);
                     if (metadata == null)
                         continue;
 
@@ -836,13 +837,16 @@ Shader ""Hidden/GraphErrorShader2""
                 portPropertyIndices[portIndex] = new List<int>();
             }
 
-            foreach (var property in graph.properties)
-            {
-                if (!property.isExposed)
-                {
-                    continue;
-                }
+            // Fetch properties from the categories to keep the same order as in the shader graph blackboard
+            // Union with the flat properties collection because previous shader graph version could store properties without category
+            var sortedProperties = graph.categories
+                .SelectMany(x => x.Children)
+                .OfType<AbstractShaderProperty>()
+                .Union(graph.properties)
+                .Where(x => x.isExposed);
 
+            foreach (var property in sortedProperties)
+            {
                 var propertyIndex = inputProperties.Count;
                 var codeIndex = codeSnippets.Count;
 
