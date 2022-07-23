@@ -5,7 +5,7 @@ using System.Globalization;
 using UnityEditor.Experimental;
 using UnityEditor.Experimental.GraphView;
 using UnityEditor.SceneManagement;
-using UnityEditor.UIElements;
+
 using UnityEditor.VFX.UIElements;
 using UnityEngine;
 using UnityEngine.VFX;
@@ -355,13 +355,14 @@ namespace UnityEditor.VFX.UI
             if (m_BoundsRecorder != null)
             {
                 m_BoundsRecorder.isRecording = false;
+                m_BoundsRecorder.CleanUp();
                 m_BoundsRecorder = null;
             }
         }
 
         void UpdateBoundsRecorder()
         {
-            if (m_AttachedComponent != null && m_View.controller.graph != null)
+            if (controller != null && m_AttachedComponent != null && m_View.controller.graph != null)
             {
                 controller.RecompileExpressionGraphIfNeeded();
                 bool wasRecording = false;
@@ -615,7 +616,7 @@ namespace UnityEditor.VFX.UI
                 current = current.parent;
             }
 
-            if (EditorSceneManager.loadedSceneCount > 1)
+            if (UnityEngine.SceneManagement.SceneManager.loadedSceneCount > 1)
             {
                 path = m_AttachedComponent.gameObject.scene.name + " : " + path;
             }

@@ -14,12 +14,18 @@ namespace UnityEditor.VFX
     {
         Local = 0,
         World = 1,
+        None = int.MaxValue
     }
 
     // TODO Move this
     interface ISpaceable
     {
         VFXCoordinateSpace space { get; set; }
+    }
+
+    interface IVFXDataGetter
+    {
+        VFXData GetData();
     }
 
     abstract class VFXData : VFXModel

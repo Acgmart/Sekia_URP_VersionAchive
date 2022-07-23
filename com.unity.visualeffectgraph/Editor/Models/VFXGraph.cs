@@ -21,6 +21,10 @@ namespace UnityEditor.VFX
         {
             List<string> assetToReimport = null;
 
+#if VFX_HAS_TIMELINE
+            UnityEditor.VFX.Migration.ActivationToControlTrack.SanitizePlayable(importedAssets);
+#endif
+
             foreach (var assetPath in importedAssets)
             {
                 bool isVFX = VisualEffectAssetModicationProcessor.HasVFXExtension(assetPath);
@@ -359,7 +363,9 @@ namespace UnityEditor.VFX
         // 6: Remove automatic strip orientation from quad strip context
         // 7: Add CameraBuffer type
         // 8: Bounds computation introduces a BoundsSettingMode for VFXDataParticles
-        public static readonly int CurrentVersion = 8;
+        // 9: Update HDRP decal angle fade encoding
+        // 10: Position Mesh and Skinned Mesh out of experimental (changing the list of flag and output types)
+        public static readonly int CurrentVersion = 10;
 
         public readonly VFXErrorManager errorManager = new VFXErrorManager();
 
@@ -664,6 +670,7 @@ namespace UnityEditor.VFX
 
             if (cause != VFXModel.InvalidationCause.kExpressionInvalidated &&
                 cause != VFXModel.InvalidationCause.kExpressionGraphChanged &&
+                cause != VFXModel.InvalidationCause.kExpressionValueInvalidated &&
                 cause != VFXModel.InvalidationCause.kUIChangedTransient &&
                 (model.hideFlags & HideFlags.DontSave) == 0)
             {

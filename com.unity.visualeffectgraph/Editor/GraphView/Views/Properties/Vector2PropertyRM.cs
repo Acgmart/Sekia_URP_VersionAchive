@@ -68,6 +68,7 @@ namespace UnityEditor.VFX.UI
 
         protected override void UpdateIndeterminate()
         {
+            m_VectorField.indeterminate = indeterminate;
             if (m_Slider != null)
                 m_Slider.indeterminate = indeterminate;
         }
@@ -120,8 +121,8 @@ namespace UnityEditor.VFX.UI
         protected INotifyValueChanged<Vector2> CreateSimpleField(out VFXVector2Field textField)
         {
             var field = new VFXLabeledField<VFXVector2Field, Vector2>(m_Label);
-            field.onValueDragFinished = t => ValueDragFinished();
-            field.onValueDragStarted = t => ValueDragStarted();
+            field.SetOnValueDragFinished(t => ValueDragFinished());
+            field.SetOnValueDragStarted(t => ValueDragStarted());
             textField = field.control;
             return field;
         }

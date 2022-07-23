@@ -55,7 +55,7 @@ namespace UnityEditor.VFX
         public List<VFXContextLink> link = new List<VFXContextLink>();
     }
 
-    internal class VFXContext : VFXSlotContainerModel<VFXGraph, VFXBlock>
+    internal class VFXContext : VFXSlotContainerModel<VFXGraph, VFXBlock>, IVFXDataGetter
     {
         protected static string RenderPipeTemplate(string fileName)
         {
@@ -618,7 +618,7 @@ namespace UnityEditor.VFX
                 {
                     return (m_Data as ISpaceable).space;
                 }
-                return (VFXCoordinateSpace)int.MaxValue;
+                return VFXCoordinateSpace.None;
             }
 
             set

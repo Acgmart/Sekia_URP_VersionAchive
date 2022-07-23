@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+
 using UnityEditorInternal;
 using UnityEditor;
 using UnityEngine;
@@ -9,6 +10,7 @@ using UnityEngine.VFX;
 using UnityEditor.Callbacks;
 using UnityEditor.VFX;
 using UnityEditor.VFX.UI;
+using UnityEngine.Experimental.Rendering;
 
 using UnityObject = UnityEngine.Object;
 
@@ -154,6 +156,14 @@ class VisualEffectAssetEditor : Editor
         {
             m_OutputContexts[i].vfxSystemSortPriority = i;
         }
+
+        if (VFXViewWindow.GetAllWindows().All(x => x.graphView?.controller?.graph.visualEffectResource.GetInstanceID() != m_CurrentGraph.visualEffectResource.GetInstanceID() || !x.hasFocus))
+        {
+            using var reporter = new VFXCompileErrorReporter(m_CurrentGraph.errorManager);
+            VFXGraph.compileReporter = reporter;
+            AssetDatabase.ImportAsset(AssetDatabase.GetAssetPath(m_CurrentGraph.visualEffectResource));
+            VFXGraph.compileReporter = null;
+        }
     }
 
     private void DrawOutputContextItem(Rect rect, int index, bool isActive, bool isFocused)
@@ -186,6 +196,15 @@ class VisualEffectAssetEditor : Editor
             m_OutputContexts.AddRange(m_CurrentGraph.children.OfType<IVFXSubRenderer>().OrderBy(t => t.vfxSystemSortPriority));
         }
 
+        if (s_PlayPauseIcons == null)
+        {
+            s_PlayPauseIcons = new[]
+            {
+                EditorGUIUtility.TrIconContent("PlayButton", "Animate preview"),
+                EditorGUIUtility.TrIconContent("PauseButton", "Pause preview animation"),
+            };
+        }
+
         m_ReorderableList = new ReorderableList(m_OutputContexts, typeof(IVFXSubRenderer));
         m_ReorderableList.displayRemove = false;
         m_ReorderableList.displayAdd = false;
@@ -196,6 +215,8 @@ class VisualEffectAssetEditor : Editor
 
         if (m_VisualEffectGO == null)
         {
+            m_PreviewUtility?.Cleanup();
+
             m_PreviewUtility = new PreviewRenderUtility();
             m_PreviewUtility.camera.fieldOfView = 60.0f;
             m_PreviewUtility.camera.allowHDR = true;
@@ -211,6 +232,8 @@ class VisualEffectAssetEditor : Editor
 
             m_VisualEffectGO.hideFlags = HideFlags.DontSave;
             m_VisualEffect = m_VisualEffectGO.AddComponent<VisualEffect>();
+            m_VisualEffect.pause = true;
+            m_RemainingFramesToRender = 2;
             m_PreviewUtility.AddManagedGO(m_VisualEffectGO);
 
             m_VisualEffectGO.transform.localPosition = Vector3.zero;
@@ -220,9 +243,8 @@ class VisualEffectAssetEditor : Editor
             m_VisualEffect.visualEffectAsset = target;
 
             m_CurrentBounds = new Bounds(Vector3.zero, Vector3.one);
-            m_FrameCount = 0;
-            m_Distance = 10;
-            m_Angles = Vector3.forward;
+            m_Distance = null;
+            m_Angles = Vector2.zero;
 
             if (s_CubeWireFrame == null)
             {
@@ -276,6 +298,9 @@ class VisualEffectAssetEditor : Editor
             prewarmDeltaTime = resourceObject.FindProperty("m_Infos.m_PreWarmDeltaTime");
             prewarmStepCount = resourceObject.FindProperty("m_Infos.m_PreWarmStepCount");
             initialEventName = resourceObject.FindProperty("m_Infos.m_InitialEventName");
+            instancingModeProperty = resourceObject.FindProperty("m_Infos.m_InstancingMode");
+            instancingCapacityProperty = resourceObject.FindProperty("m_Infos.m_InstancingCapacity");
+            instancingDisabledReasonProperty = resourceObject.FindProperty("m_Infos.m_InstancingDisabledReason");
         }
     }
 
@@ -283,11 +308,10 @@ class VisualEffectAssetEditor : Editor
 
     GameObject m_VisualEffectGO;
     VisualEffect m_VisualEffect;
-    Vector3 m_Angles;
-    float m_Distance;
+    Vector2 m_Angles;
+    float? m_Distance;
+    int m_RemainingFramesToRender;
     Bounds m_CurrentBounds;
-
-    int m_FrameCount = 0;
 
     const int kSafeFrame = 2;
 
@@ -296,28 +320,65 @@ class VisualEffectAssetEditor : Editor
         return !serializedObject.isEditingMultipleObjects;
     }
 
-    void ComputeFarNear()
+    void ComputeFarNear(float distance)
     {
         if (m_CurrentBounds.size != Vector3.zero)
         {
             float maxBounds = Mathf.Sqrt(m_CurrentBounds.size.x * m_CurrentBounds.size.x + m_CurrentBounds.size.y * m_CurrentBounds.size.y + m_CurrentBounds.size.z * m_CurrentBounds.size.z);
-            m_PreviewUtility.camera.farClipPlane = m_Distance + maxBounds * 1.1f;
-            m_PreviewUtility.camera.nearClipPlane = Mathf.Max(0.0001f, (m_Distance - maxBounds));
-            m_PreviewUtility.camera.nearClipPlane = Mathf.Max(0.0001f, (m_Distance - maxBounds));
+            m_PreviewUtility.camera.farClipPlane = distance + maxBounds * 1.1f;
+            m_PreviewUtility.camera.nearClipPlane = Mathf.Max(0.0001f, (distance - maxBounds));
+            m_PreviewUtility.camera.nearClipPlane = Mathf.Max(0.0001f, (distance - maxBounds));
         }
     }
+
+    public override void OnPreviewSettings()
+    {
+        EditorGUI.BeginChangeCheck();
+        int isAnimatedState = m_IsAnimated ? 1 : 0;
+        m_IsAnimated = PreviewGUI.CycleButton(isAnimatedState, s_PlayPauseIcons) == 1;
+        if (EditorGUI.EndChangeCheck())
+        {
+            m_VisualEffect.pause = !m_IsAnimated;
+
+            if (m_IsAnimated)
+            {
+                DestroyImmediate(m_PreviewTexture);
+                m_PreviewTexture = null;
+            }
+            else
+                CopyRenderedFrame();
+        }
+
+        GUI.enabled = m_IsAnimated;
+        // Random id=10012 because when set to 0 the button get highlighted by default !?
+        if (EditorGUILayout.IconButton(10012, EditorGUIUtility.TrIconContent("Refresh", "Restart VFX"), EditorStyles.toolbarButton, null))
+        {
+            m_VisualEffect.Reinit();
+        }
+        GUI.enabled = true;
+    }
+
+    private static GUIContent[] s_PlayPauseIcons;
+    private bool m_IsAnimated;
+    private Texture m_PreviewTexture;
+    private Rect m_LastArea;
 
     public override void OnInteractivePreviewGUI(Rect r, GUIStyle background)
     {
         if (m_VisualEffectGO == null)
             OnEnable();
 
-        bool isRepaint = (Event.current.type == EventType.Repaint);
+        bool isRepaint = Event.current.type == EventType.Repaint;
 
-        m_Angles = VFXPreviewGUI.Drag2D(m_Angles, r);
         Renderer renderer = m_VisualEffectGO.GetComponent<Renderer>();
         if (renderer == null)
             return;
+
+        if (isRepaint && r != m_LastArea)
+            RequestNewFrame();
+
+        if (VFXPreviewGUI.TryDrag2D(ref m_Angles, m_LastArea))
+            RequestNewFrame();
 
         if (renderer.bounds.size != Vector3.zero)
         {
@@ -330,12 +391,14 @@ class VisualEffectAssetEditor : Editor
                 size.x = (m_CurrentBounds.size.y + m_CurrentBounds.size.z) * 0.1f;
                 m_CurrentBounds.size = size;
             }
+
             if (m_CurrentBounds.size.y == 0)
             {
                 Vector3 size = m_CurrentBounds.size;
                 size.y = (m_CurrentBounds.size.x + m_CurrentBounds.size.z) * 0.1f;
                 m_CurrentBounds.size = size;
             }
+
             if (m_CurrentBounds.size.z == 0)
             {
                 Vector3 size = m_CurrentBounds.size;
@@ -344,39 +407,74 @@ class VisualEffectAssetEditor : Editor
             }
         }
 
-        if (m_FrameCount == kSafeFrame) // wait to frame before asking the renderer bounds as it is a computed value.
+        if (!m_Distance.HasValue && m_RemainingFramesToRender == 1)
         {
-            float maxBounds = Mathf.Sqrt(m_CurrentBounds.size.x * m_CurrentBounds.size.x + m_CurrentBounds.size.y * m_CurrentBounds.size.y + m_CurrentBounds.size.z * m_CurrentBounds.size.z);
+            float maxBounds = Mathf.Sqrt(m_CurrentBounds.size.x * m_CurrentBounds.size.x +
+                                         m_CurrentBounds.size.y * m_CurrentBounds.size.y +
+                                         m_CurrentBounds.size.z * m_CurrentBounds.size.z);
             m_Distance = Mathf.Max(0.01f, maxBounds * 1.25f);
-            ComputeFarNear();
+            ComputeFarNear(0f);
         }
         else
         {
-            ComputeFarNear();
+            ComputeFarNear(m_Distance.GetValueOrDefault(0f));
         }
-        m_FrameCount++;
+
         if (Event.current.isScrollWheel)
         {
-            m_Distance *= 1 + (Event.current.delta.y * .015f);
+            m_Distance *= 1 + Event.current.delta.y * .015f;
+            RequestNewFrame();
         }
 
         if (m_Mat == null)
             m_Mat = (Material)EditorGUIUtility.LoadRequired("SceneView/HandleLines.mat");
 
-        if (isRepaint)
+        if (!isRepaint)
         {
-            m_PreviewUtility.BeginPreview(r, background);
+            if (m_RemainingFramesToRender > 0)
+                Repaint();
+            return;
+        }
+
+        if (r.width > 50 && r.height > 50)
+            m_LastArea = r;
+
+        bool needsRender = m_IsAnimated || m_RemainingFramesToRender > 0;
+
+        if (needsRender)
+        {
+            m_RemainingFramesToRender--;
+            m_PreviewUtility.BeginPreview(m_LastArea, background);
 
             Quaternion rot = Quaternion.Euler(0, m_Angles.x, 0) * Quaternion.Euler(m_Angles.y, 0, 0);
-            m_PreviewUtility.camera.transform.position = m_CurrentBounds.center + rot * new Vector3(0, 0, -m_Distance);
+            m_PreviewUtility.camera.transform.position = m_CurrentBounds.center + rot * new Vector3(0, 0, -m_Distance.GetValueOrDefault(0));
             m_PreviewUtility.camera.transform.localRotation = rot;
-            m_PreviewUtility.DrawMesh(s_CubeWireFrame, Matrix4x4.TRS(m_CurrentBounds.center, Quaternion.identity, m_CurrentBounds.size), m_Mat, 0);
+            if (m_Distance.HasValue)
+                m_PreviewUtility.DrawMesh(s_CubeWireFrame, Matrix4x4.TRS(m_CurrentBounds.center, Quaternion.identity, m_CurrentBounds.size), m_Mat, 0);
             m_PreviewUtility.Render(true);
-            m_PreviewUtility.EndAndDrawPreview(r);
-
-            // Ask for repaint so the effect is animated.
-            Repaint();
+            m_PreviewUtility.EndAndDrawPreview(m_LastArea);
         }
+
+        if (!m_IsAnimated && m_RemainingFramesToRender == 0)
+            CopyRenderedFrame();
+
+        if (m_IsAnimated)
+            Repaint();
+        else if (m_PreviewTexture != null)
+            EditorGUI.DrawPreviewTexture(m_LastArea, m_PreviewTexture);
+    }
+
+    void RequestNewFrame()
+    {
+        if (m_RemainingFramesToRender < 0)
+            m_RemainingFramesToRender = 2;
+    }
+
+    void CopyRenderedFrame()
+    {
+        m_RemainingFramesToRender = -1;
+        m_PreviewTexture = new Texture2D(m_PreviewUtility.renderTexture.width, m_PreviewUtility.renderTexture.height, m_PreviewUtility.renderTexture.graphicsFormat, TextureCreationFlags.DontInitializePixels);
+        Graphics.CopyTexture(m_PreviewUtility.renderTexture, m_PreviewTexture);
     }
 
     Material m_Mat;
@@ -390,6 +488,11 @@ class VisualEffectAssetEditor : Editor
         if (m_PreviewUtility != null)
         {
             m_PreviewUtility.Cleanup();
+        }
+
+        if (m_PreviewTexture != null)
+        {
+            DestroyImmediate(m_PreviewTexture);
         }
     }
 
@@ -406,10 +509,9 @@ class VisualEffectAssetEditor : Editor
         VFXCullingFlags.CullNone,
     };
 
-    private string UpdateModeToString(VFXUpdateMode mode)
-    {
-        return ObjectNames.NicifyVariableName(mode.ToString());
-    }
+    private static readonly GUIContent k_InstancingContent = EditorGUIUtility.TrTextContent("Instancing");
+    private static readonly GUIContent k_InstancingModeContent = EditorGUIUtility.TrTextContent("Instancing Mode", "Selects how the visual effect will be handled regarding instancing.");
+    private static readonly GUIContent k_InstancingCapacityContent = EditorGUIUtility.TrTextContent("Max Batch Capacity", "Max number of instances that can be grouped together in a single batch.");
 
     SerializedObject resourceObject;
     SerializedProperty resourceUpdateModeProperty;
@@ -418,8 +520,101 @@ class VisualEffectAssetEditor : Editor
     SerializedProperty prewarmDeltaTime;
     SerializedProperty prewarmStepCount;
     SerializedProperty initialEventName;
+    SerializedProperty instancingModeProperty;
+    SerializedProperty instancingCapacityProperty;
+    SerializedProperty instancingDisabledReasonProperty;
 
     private static readonly float k_MinimalCommonDeltaTime = 1.0f / 800.0f;
+
+    public static void DisplayPrewarmInspectorGUI(SerializedObject resourceObject, SerializedProperty prewarmDeltaTime, SerializedProperty prewarmStepCount)
+    {
+        if (!prewarmDeltaTime.hasMultipleDifferentValues && !prewarmStepCount.hasMultipleDifferentValues)
+        {
+            var currentDeltaTime = prewarmDeltaTime.floatValue;
+            var currentStepCount = prewarmStepCount.uintValue;
+            var currentTotalTime = currentDeltaTime * currentStepCount;
+            EditorGUI.BeginChangeCheck();
+            currentTotalTime = EditorGUILayout.FloatField(EditorGUIUtility.TrTextContent("PreWarm Total Time", "Sets the time in seconds to advance the current effect to when it is initially played. "), currentTotalTime);
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (currentStepCount <= 0)
+                {
+                    prewarmStepCount.uintValue = currentStepCount = 1u;
+                }
+
+                currentDeltaTime = currentTotalTime / currentStepCount;
+                prewarmDeltaTime.floatValue = currentDeltaTime;
+                resourceObject.ApplyModifiedProperties();
+            }
+
+            EditorGUI.BeginChangeCheck();
+            currentStepCount = (uint)EditorGUILayout.IntField(EditorGUIUtility.TrTextContent("PreWarm Step Count", "Sets the number of simulation steps the prewarm should be broken down to. "), (int)currentStepCount);
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (currentStepCount <= 0 && currentTotalTime != 0.0f)
+                {
+                    prewarmStepCount.uintValue = currentStepCount = 1;
+                }
+
+                currentDeltaTime = currentTotalTime == 0.0f ? 0.0f : currentTotalTime / currentStepCount;
+                prewarmDeltaTime.floatValue = currentDeltaTime;
+                prewarmStepCount.uintValue = currentStepCount;
+                resourceObject.ApplyModifiedProperties();
+            }
+
+            EditorGUI.BeginChangeCheck();
+            currentDeltaTime = EditorGUILayout.FloatField(EditorGUIUtility.TrTextContent("PreWarm Delta Time", "Sets the time in seconds for each step to achieve the desired total prewarm time."), currentDeltaTime);
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (currentDeltaTime < k_MinimalCommonDeltaTime)
+                {
+                    prewarmDeltaTime.floatValue = currentDeltaTime = k_MinimalCommonDeltaTime;
+                }
+
+                if (currentDeltaTime > currentTotalTime)
+                {
+                    currentTotalTime = currentDeltaTime;
+                }
+
+                if (currentTotalTime != 0.0f)
+                {
+                    var candidateStepCount_A = (uint)Mathf.FloorToInt(currentTotalTime / currentDeltaTime);
+                    var candidateStepCount_B = (uint)Mathf.RoundToInt(currentTotalTime / currentDeltaTime);
+
+                    var totalTime_A = currentDeltaTime * candidateStepCount_A;
+                    var totalTime_B = currentDeltaTime * candidateStepCount_B;
+
+                    if (Mathf.Abs(totalTime_A - currentTotalTime) < Mathf.Abs(totalTime_B - currentTotalTime))
+                    {
+                        currentStepCount = candidateStepCount_A;
+                    }
+                    else
+                    {
+                        currentStepCount = candidateStepCount_B;
+                    }
+
+                    prewarmStepCount.uintValue = currentStepCount;
+                }
+                prewarmDeltaTime.floatValue = currentDeltaTime;
+                resourceObject.ApplyModifiedProperties();
+            }
+        }
+        else
+        {
+            //Multi selection case, can't resolve total time easily
+            EditorGUI.BeginChangeCheck();
+            EditorGUI.showMixedValue = prewarmStepCount.hasMultipleDifferentValues;
+            EditorGUILayout.PropertyField(prewarmStepCount, EditorGUIUtility.TrTextContent("PreWarm Step Count", "Sets the number of simulation steps the prewarm should be broken down to."));
+            EditorGUI.showMixedValue = prewarmDeltaTime.hasMultipleDifferentValues;
+            EditorGUILayout.PropertyField(prewarmDeltaTime, EditorGUIUtility.TrTextContent("PreWarm Delta Time", "Sets the time in seconds for each step to achieve the desired total prewarm time."));
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (prewarmDeltaTime.floatValue < k_MinimalCommonDeltaTime)
+                    prewarmDeltaTime.floatValue = k_MinimalCommonDeltaTime;
+                resourceObject.ApplyModifiedProperties();
+            }
+        }
+    }
 
     public override void OnInspectorGUI()
     {
@@ -558,95 +753,12 @@ class VisualEffectAssetEditor : Editor
 
         EditorGUILayout.EndHorizontal();
 
+        DrawInstancingGUI();
+
         VisualEffectEditor.ShowHeader(EditorGUIUtility.TrTextContent("Initial state"), false, false);
         if (prewarmDeltaTime != null && prewarmStepCount != null)
         {
-            if (!prewarmDeltaTime.hasMultipleDifferentValues && !prewarmStepCount.hasMultipleDifferentValues)
-            {
-                var currentDeltaTime = prewarmDeltaTime.floatValue;
-                var currentStepCount = prewarmStepCount.intValue;
-                var currentTotalTime = currentDeltaTime * currentStepCount;
-                EditorGUI.BeginChangeCheck();
-                currentTotalTime = EditorGUILayout.FloatField(EditorGUIUtility.TrTextContent("PreWarm Total Time", "Sets the time in seconds to advance the current effect to when it is initially played. "), currentTotalTime);
-                if (EditorGUI.EndChangeCheck())
-                {
-                    if (currentStepCount <= 0)
-                    {
-                        prewarmStepCount.intValue = currentStepCount = 1;
-                    }
-
-                    currentDeltaTime = currentTotalTime / currentStepCount;
-                    prewarmDeltaTime.floatValue = currentDeltaTime;
-                    resourceObject.ApplyModifiedProperties();
-                }
-
-                EditorGUI.BeginChangeCheck();
-                currentStepCount = EditorGUILayout.IntField(EditorGUIUtility.TrTextContent("PreWarm Step Count", "Sets the number of simulation steps the prewarm should be broken down to. "), currentStepCount);
-                if (EditorGUI.EndChangeCheck())
-                {
-                    if (currentStepCount <= 0 && currentTotalTime != 0.0f)
-                    {
-                        prewarmStepCount.intValue = currentStepCount = 1;
-                    }
-
-                    currentDeltaTime = currentTotalTime == 0.0f ? 0.0f : currentTotalTime / currentStepCount;
-                    prewarmDeltaTime.floatValue = currentDeltaTime;
-                    prewarmStepCount.intValue = currentStepCount;
-                    resourceObject.ApplyModifiedProperties();
-                }
-
-                EditorGUI.BeginChangeCheck();
-                currentDeltaTime = EditorGUILayout.FloatField(EditorGUIUtility.TrTextContent("PreWarm Delta Time", "Sets the time in seconds for each step to achieve the desired total prewarm time."), currentDeltaTime);
-                if (EditorGUI.EndChangeCheck())
-                {
-                    if (currentDeltaTime < k_MinimalCommonDeltaTime)
-                    {
-                        prewarmDeltaTime.floatValue = currentDeltaTime = k_MinimalCommonDeltaTime;
-                    }
-
-                    if (currentDeltaTime > currentTotalTime)
-                    {
-                        currentTotalTime = currentDeltaTime;
-                    }
-
-                    if (currentTotalTime != 0.0f)
-                    {
-                        var candidateStepCount_A = Mathf.FloorToInt(currentTotalTime / currentDeltaTime);
-                        var candidateStepCount_B = Mathf.RoundToInt(currentTotalTime / currentDeltaTime);
-
-                        var totalTime_A = currentDeltaTime * candidateStepCount_A;
-                        var totalTime_B = currentDeltaTime * candidateStepCount_B;
-
-                        if (Mathf.Abs(totalTime_A - currentTotalTime) < Mathf.Abs(totalTime_B - currentTotalTime))
-                        {
-                            currentStepCount = candidateStepCount_A;
-                        }
-                        else
-                        {
-                            currentStepCount = candidateStepCount_B;
-                        }
-
-                        prewarmStepCount.intValue = currentStepCount;
-                    }
-                    prewarmDeltaTime.floatValue = currentDeltaTime;
-                    resourceObject.ApplyModifiedProperties();
-                }
-            }
-            else
-            {
-                //Multi selection case, can't resolve total time easily
-                EditorGUI.BeginChangeCheck();
-                EditorGUI.showMixedValue = prewarmStepCount.hasMultipleDifferentValues;
-                EditorGUILayout.PropertyField(prewarmStepCount, EditorGUIUtility.TrTextContent("PreWarm Step Count", "Sets the number of simulation steps the prewarm should be broken down to."));
-                EditorGUI.showMixedValue = prewarmDeltaTime.hasMultipleDifferentValues;
-                EditorGUILayout.PropertyField(prewarmDeltaTime, EditorGUIUtility.TrTextContent("PreWarm Delta Time", "Sets the time in seconds for each step to achieve the desired total prewarm time."));
-                if (EditorGUI.EndChangeCheck())
-                {
-                    if (prewarmDeltaTime.floatValue < k_MinimalCommonDeltaTime)
-                        prewarmDeltaTime.floatValue = k_MinimalCommonDeltaTime;
-                    resourceObject.ApplyModifiedProperties();
-                }
-            }
+            DisplayPrewarmInspectorGUI(resourceObject, prewarmDeltaTime, prewarmStepCount);
         }
 
         if (initialEventName != null)
@@ -751,13 +863,45 @@ class VisualEffectAssetEditor : Editor
         }
         GUI.enabled = false;
     }
+
+    private void DrawInstancingGUI()
+    {
+        VisualEffectEditor.ShowHeader(k_InstancingContent, false, false);
+
+        EditorGUI.BeginChangeCheck();
+
+        VFXInstancingDisabledReason disabledReason = (VFXInstancingDisabledReason)instancingDisabledReasonProperty.intValue;
+        bool forceDisabled = disabledReason != VFXInstancingDisabledReason.None;
+        if (forceDisabled)
+        {
+            EditorGUILayout.HelpBox("Instancing not available:\n- Unknown reason", MessageType.Info);
+        }
+
+        VFXInstancingMode instancingMode = forceDisabled ? VFXInstancingMode.Disabled : (VFXInstancingMode)instancingModeProperty.intValue;
+        EditorGUI.BeginDisabled(forceDisabled);
+        instancingMode = (VFXInstancingMode)EditorGUILayout.EnumPopup(k_InstancingModeContent, instancingMode);
+        EditorGUI.EndDisabled();
+
+        int instancingCapacity = instancingCapacityProperty.intValue;
+        if (instancingMode == VFXInstancingMode.Custom)
+        {
+            instancingCapacity = EditorGUILayout.DelayedIntField(k_InstancingCapacityContent, instancingCapacity);
+        }
+
+        if (EditorGUI.EndChangeCheck())
+        {
+            instancingModeProperty.intValue = (int)instancingMode;
+            instancingCapacityProperty.intValue = System.Math.Max(instancingCapacity, 1);
+            resourceObject.ApplyModifiedProperties();
+        }
+    }
 }
 
 
 static class VFXPreviewGUI
 {
     static int sliderHash = "Slider".GetHashCode();
-    public static Vector2 Drag2D(Vector2 scrollPosition, Rect position)
+    public static bool TryDrag2D(ref Vector2 scrollPosition, Rect position)
     {
         int id = GUIUtility.GetControlID(sliderHash, FocusType.Passive);
         Event evt = Event.current;
@@ -770,7 +914,7 @@ static class VFXPreviewGUI
                     evt.Use();
                     EditorGUIUtility.SetWantsMouseJumping(1);
                 }
-                break;
+                return false;
             case EventType.MouseDrag:
                 if (GUIUtility.hotControl == id)
                 {
@@ -779,13 +923,14 @@ static class VFXPreviewGUI
                     evt.Use();
                     GUI.changed = true;
                 }
-                break;
+                return true;
             case EventType.MouseUp:
                 if (GUIUtility.hotControl == id)
                     GUIUtility.hotControl = 0;
                 EditorGUIUtility.SetWantsMouseJumping(0);
-                break;
+                return false;
         }
-        return scrollPosition;
+
+        return false;
     }
 }

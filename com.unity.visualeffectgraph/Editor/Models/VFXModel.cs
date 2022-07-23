@@ -42,17 +42,18 @@ namespace UnityEditor.VFX
     {
         public enum InvalidationCause
         {
-            kStructureChanged,      // Model structure (hierarchy) has changed
-            kParamChanged,          // Some parameter values have changed
-            kSettingChanged,        // A setting value has changed
-            kSpaceChanged,          // Space has been changed
-            kConnectionChanged,     // Connection have changed
-            kExpressionInvalidated, // No direct change to the model but a change in connection was propagated from the parents
-            kExpressionGraphChanged,// Expression graph must be recomputed
-            kUIChanged,             // UI stuff has changed
-            kUIChangedTransient,    // UI stuff has been changed be does not require serialization
-            kMaterialChanged,       // Some asset material properties has changed
-            kEnableChanged          // Node has been enabled/disabled
+            kStructureChanged,              // Model structure (hierarchy) has changed
+            kParamChanged,                  // Some parameter values have changed
+            kSettingChanged,                // A setting value has changed
+            kSpaceChanged,                  // Space has been changed
+            kConnectionChanged,             // Connection have changed
+            kExpressionInvalidated,         // No direct change to the model but a change in connection was propagated from the parents
+            kExpressionValueInvalidated,    // No direct change but a kParamChanged upstream was propagated meaning the expression in itself has not changed but it's evaluated value may have
+            kExpressionGraphChanged,        // Expression graph must be recomputed
+            kUIChanged,                     // UI stuff has changed
+            kUIChangedTransient,            // UI stuff has been changed be does not require serialization
+            kMaterialChanged,               // Some asset material properties has changed
+            kEnableChanged                  // Node has been enabled/disabled
         }
 
         public new virtual string name { get { return string.Empty; } }
@@ -422,17 +423,53 @@ namespace UnityEditor.VFX
             }).Select(field => new VFXSetting(field, this));
         }
 
-        static public VFXExpression ConvertSpace(VFXExpression input, VFXSlot targetSlot, VFXCoordinateSpace space)
+        static protected VFXExpression TransformExpression(VFXExpression input, SpaceableType dstSpaceType, VFXExpression matrix)
         {
-            if (targetSlot.spaceable)
+            if (dstSpaceType == SpaceableType.Position)
             {
-                if (targetSlot.space != space)
-                {
-                    var spaceType = targetSlot.GetSpaceTransformationType();
-                    input = ConvertSpace(input, spaceType, space);
-                }
+                input = new VFXExpressionTransformPosition(matrix, input);
             }
+            else if (dstSpaceType == SpaceableType.Direction)
+            {
+                input = new VFXExpressionTransformDirection(matrix, input);
+            }
+            else if (dstSpaceType == SpaceableType.Matrix)
+            {
+                input = new VFXExpressionTransformMatrix(matrix, input);
+            }
+            else if (dstSpaceType == SpaceableType.Vector)
+            {
+                input = new VFXExpressionTransformVector(matrix, input);
+            }
+            else
+            {
+                //Not a transformable subSlot
+            }
+
             return input;
+        }
+
+        static protected VFXExpression ConvertSpace(VFXExpression input, VFXCoordinateSpace srcSpace, SpaceableType dstSpaceType, VFXCoordinateSpace dstSpace)
+        {
+            if (dstSpace == VFXCoordinateSpace.None || srcSpace == VFXCoordinateSpace.None)
+            {
+                return input;
+            }
+
+            VFXExpression matrix = null;
+            if (dstSpace == VFXCoordinateSpace.Local)
+            {
+                matrix = VFXBuiltInExpression.WorldToLocal;
+            }
+            else if (dstSpace == VFXCoordinateSpace.World)
+            {
+                matrix = VFXBuiltInExpression.LocalToWorld;
+            }
+            else
+            {
+                throw new InvalidOperationException("Cannot Convert to unknown space");
+            }
+            return TransformExpression(input, dstSpaceType, matrix);
         }
 
         static protected VFXExpression ConvertSpace(VFXExpression input, SpaceableType spaceType, VFXCoordinateSpace space)
@@ -451,27 +488,7 @@ namespace UnityEditor.VFX
                 throw new InvalidOperationException("Cannot Convert to unknown space");
             }
 
-            if (spaceType == SpaceableType.Position)
-            {
-                input = new VFXExpressionTransformPosition(matrix, input);
-            }
-            else if (spaceType == SpaceableType.Direction)
-            {
-                input = new VFXExpressionTransformDirection(matrix, input);
-            }
-            else if (spaceType == SpaceableType.Matrix)
-            {
-                input = new VFXExpressionTransformMatrix(matrix, input);
-            }
-            else if (spaceType == SpaceableType.Vector)
-            {
-                input = new VFXExpressionTransformVector(matrix, input);
-            }
-            else
-            {
-                //Not a transformable subSlot
-            }
-            return input;
+            return TransformExpression(input, spaceType, matrix);
         }
 
         protected virtual IEnumerable<string> filteredOutSettings
@@ -509,7 +526,7 @@ namespace UnityEditor.VFX
                 VFXSlot slotToClean = null;
                 do
                 {
-                    slotToClean = slotContainer.inputSlots.Concat(slotContainer.outputSlots).FirstOrDefault(o => o.HasLink(true));
+                    slotToClean = slotContainer.inputSlots.Concat(slotContainer.outputSlots).Append(slotContainer.activationSlot).FirstOrDefault(o => o != null && o.HasLink(true));
                     if (slotToClean)
                         slotToClean.UnlinkAll(true, notify);
                 }
@@ -545,11 +562,6 @@ namespace UnityEditor.VFX
                         for (int i = 0; i < groupInfo.contents.Length; ++i)
                             if (groupInfo.contents[i].model == src)
                                 groupInfo.contents[i].model = dst;
-            }
-
-            if (dst is VFXBlock && src is VFXBlock)
-            {
-                ((VFXBlock)dst).enabled = ((VFXBlock)src).enabled;
             }
 
             // Unlink everything

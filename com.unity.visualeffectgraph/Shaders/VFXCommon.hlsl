@@ -38,14 +38,6 @@
 #define UNITY_INV_HALF_PI   0.636619772367f
 #endif
 
-// SHADER_AVAILABLE_XXX defines are not yet passed to compute shader atm
-// So we define it manually for compute atm.
-// It won't compile for devices that don't have cubemap array support but this is acceptable by now
-// TODO Remove this once SHADER_AVAILABLE_XXX are passed to compute shaders
-#ifdef SHADER_STAGE_COMPUTE
-#define SHADER_AVAILABLE_CUBEARRAY 1
-#endif
-
 struct VFXSampler2D
 {
     Texture2D t;
@@ -70,6 +62,7 @@ struct VFXSamplerCube
     SamplerState s;
 };
 
+//Warning: this define 'SHADER_AVAILABLE_CUBEARRAY' relies on '#pragma require cubearray'
 #if SHADER_AVAILABLE_CUBEARRAY
 struct VFXSamplerCubeArray
 {
@@ -707,6 +700,54 @@ VFXUVData GetUVData(float2 flipBookSize, float2 uv, float texIndex)
     return GetUVData(flipBookSize, 1.0f / flipBookSize, uv, texIndex);
 }
 
+////////////////
+// Prefix Sum //
+////////////////
+
+//Binary search in Inclusive Prefix sum
+//Returns the index of the category between startIndex (included) and endIndex (excluded) where value lands.
+//If value exceeds the total capacity of the list, the function will return endIndex and remainder will be the amount exceeding
+//Optionally, it can return the remainder of the value compared to its category
+uint BinarySearchPrefixSum(uint value, StructuredBuffer<uint> prefixSum,uint startIndex, uint endIndex, out uint remainder)
+{
+    uint left = startIndex;
+    uint right = endIndex - 1;
+
+    while (left < right)
+    {
+        uint center = (left + right) / 2;
+        if (value < prefixSum[center])
+        {
+            right = center;
+        }
+        else
+        {
+            left = center + 1;
+        }
+    }
+    uint index = left;
+    uint prevValue = index > startIndex ? prefixSum[index - 1] : 0;
+    remainder = value - prevValue;
+
+    return index;
+}
+
+uint BinarySearchPrefixSum(uint value, StructuredBuffer<uint> prefixSum, uint startIndex, uint endIndex)
+{
+    uint remainder;
+    return BinarySearchPrefixSum(value, prefixSum, startIndex, endIndex, remainder);
+}
+
+/////////////////////
+// Thread indexing //
+/////////////////////
+
+#ifdef NB_THREADS_PER_GROUP
+uint GetThreadId(uint3 groupId, uint3 groupThreadId, uint dispatchWidth)
+{
+    return groupThreadId.x + groupId.x * NB_THREADS_PER_GROUP + groupId.y * dispatchWidth * NB_THREADS_PER_GROUP;
+}
+#endif
 
 ///////////
 // Noise //
@@ -720,10 +761,14 @@ VFXUVData GetUVData(float2 flipBookSize, float2 uv, float texIndex)
 
 #include "VFXParticleStripCommon.hlsl"
 
-
-
 ////////////////////////////
 // Bounds reduction utils //
 ////////////////////////////
 
 #include "VFXBoundsReduction.hlsl"
+
+
+//////////////////////
+// Instancing Utils //
+//////////////////////
+#include "VFXInstancing.hlsl"
