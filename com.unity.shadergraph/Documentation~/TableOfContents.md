@@ -17,6 +17,7 @@
     * [Custom Function Node](Custom-Function-Node)
     * [Shader Graph Preferences](Shader-Graph-Preferences)
     * [Samples](ShaderGraph-Samples.md)
+    * [Material Variants](materialvariant-SG)
 * Upgrade Guides
   * [Upgrade to Shader Graph 10.0.x](Upgrade-Guide-10-0-x)
 * Inside Shader Graph
@@ -115,6 +116,7 @@
         * PBR
             * [Dielectric Specular](Dielectric-Specular-Node)
             * [Metal Reflectance](Metal-Reflectance-Node)
+            * [Fresnel Equation](Fresnel-Equation-Node)
         * Scene
             * [Camera](Camera-Node)
             * [Eye Index](Eye-Index-Node)
@@ -122,6 +124,7 @@
             * [Object](Object-Node)
             * [Scene Color](Scene-Color-Node)
             * [Scene Depth](Scene-Depth-Node)
+            * [Scene Depth Difference](Scene-Depth-Difference-Node)
             * [Screen](Screen-Node)
         * Texture
             * [Calculate Level Of Detail Texture 2D Node](Calculate-Level-Of-Detail-Texture-2D-Node)
@@ -136,10 +139,10 @@
             * [Sample Virtual Texture](Sample-Virtual-Texture-Node)
             * [Sampler State](Sampler-State-Node)
             * [Split Texture Transform](Split-Texture-Transform-Node)
-            * [Texel Size](Texel-Size-Node)
             * [Texture 2D Array Asset](Texture-2D-Array-Asset-Node)
             * [Texture 2D Asset](Texture-2D-Asset-Node)
             * [Texture 3D Asset](Texture-3D-Asset-Node)
+            * [Texture Size](Texture-Size-Node)
     * [Math](Math-Nodes)
         * Advanced
             * [Absolute](Absolute-Node)
@@ -208,6 +211,7 @@
             * [Fresnel Effect](Fresnel-Effect-Node)
             * [Projection](Projection-Node)
             * [Reflection](Reflection-Node)
+            * [Refract](Refract-Node)
             * [Rejection](Rejection-Node)
             * [Rotate About Axis](Rotate-About-Axis-Node)
             * [Sphere Mask](Sphere-Mask-Node)
