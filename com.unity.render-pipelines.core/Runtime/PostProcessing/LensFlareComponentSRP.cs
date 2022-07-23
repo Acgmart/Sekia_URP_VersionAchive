@@ -97,11 +97,16 @@ namespace UnityEngine.Rendering
         private static float sCelestialAngularRadius = 3.3f * Mathf.PI / 180.0f;
 
         /// <summary>
+        /// OcclusionRemapCurve allow the occlusion [from 0 to 1] to be remap with any desired shape.
+        /// </summary>
+        public TextureCurve occlusionRemapCurve = new TextureCurve(AnimationCurve.Linear(0.0f, 0.0f, 1.0f, 1.0f), 1.0f, false, new Vector2(0.0f, 1.0f));
+
+        /// <summary>
         /// Retrieves the projected occlusion radius from a particular celestial in the infinity plane with an angular radius.
         /// This is used for directional lights which require to have consistent occlusion radius regardless of the near/farplane configuration.
-        /// <param name="mainCam">The camera utilized to calculate the occlusion radius</param>
-        /// <return>The value, in world units, of the occlusion angular radius.</return>
         /// </summary>
+        /// <param name="mainCam">The camera utilized to calculate the occlusion radius</param>
+        /// <returns>The value, in world units, of the occlusion angular radius.</returns>
         public float celestialProjectedOcclusionRadius(Camera mainCam)
         {
             float projectedRadius = (float)Math.Tan(sCelestialAngularRadius) * mainCam.farClipPlane;

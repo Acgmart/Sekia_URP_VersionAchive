@@ -5,7 +5,7 @@ using UnityEngine.Rendering;
 using UnityEngine.Rendering.RendererUtils;
 
 // Typedefs for the in-engine RendererList API (to avoid conflicts with the experimental version)
-using CoreRendererList = UnityEngine.Rendering.RendererUtils.RendererList;
+using CoreRendererList = UnityEngine.Rendering.RendererList;
 using CoreRendererListDesc = UnityEngine.Rendering.RendererUtils.RendererListDesc;
 
 namespace UnityEngine.Experimental.Rendering.RenderGraphModule
@@ -111,7 +111,7 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
                 if (handle.fallBackResource != TextureHandle.nullHandle.handle)
                     return GetTextureResource(handle.fallBackResource).graphicsResource;
                 else if (!texResource.imported)
-                    throw new InvalidOperationException("Trying to use a texture that was already released or not yet created. Make sure you declare it for reading in your pass or you don't read it before it's been written to at least once.");
+                    throw new InvalidOperationException($"Trying to use a texture ({texResource.GetName()}) that was already released or not yet created. Make sure you declare it for reading in your pass or you don't read it before it's been written to at least once.");
             }
 
             return resource;
@@ -138,11 +138,12 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
             if (!handle.IsValid())
                 return null;
 
-            var resource = GetComputeBufferResource(handle.handle);
+            var bufferResource = GetComputeBufferResource(handle.handle);
+            var resource = bufferResource.graphicsResource;
             if (resource == null)
-                throw new InvalidOperationException("Trying to use a compute buffer that was already released or not yet created. Make sure you declare it for reading in your pass or you don't read it before it's been written to at least once.");
+                throw new InvalidOperationException("Trying to use a compute buffer ({bufferResource.GetName()}) that was already released or not yet created. Make sure you declare it for reading in your pass or you don't read it before it's been written to at least once.");
 
-            return resource.graphicsResource;
+            return resource;
         }
 
         private RenderGraphResourceRegistry()
@@ -352,9 +353,14 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
             return new TextureHandle(newHandle);
         }
 
+        internal int GetResourceCount(RenderGraphResourceType type)
+        {
+            return m_RenderGraphResources[(int)type].resourceArray.size;
+        }
+
         internal int GetTextureResourceCount()
         {
-            return m_RenderGraphResources[(int)RenderGraphResourceType.Texture].resourceArray.size;
+            return GetResourceCount(RenderGraphResourceType.Texture);
         }
 
         TextureResource GetTextureResource(in ResourceHandle handle)
@@ -408,7 +414,7 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
 
         internal int GetComputeBufferResourceCount()
         {
-            return m_RenderGraphResources[(int)RenderGraphResourceType.ComputeBuffer].resourceArray.size;
+            return GetResourceCount(RenderGraphResourceType.ComputeBuffer);
         }
 
         ComputeBufferResource GetComputeBufferResource(in ResourceHandle handle)
@@ -459,6 +465,10 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
                 m_RenderGraphResources[type].createResourceCallback?.Invoke(rgContext, resource);
             }
         }
+        internal void CreatePooledResource(RenderGraphContext rgContext, ResourceHandle handle)
+        {
+            CreatePooledResource(rgContext, handle.iType, handle.index);
+        }
 
         void CreateTextureCallback(RenderGraphContext rgContext, IRenderGraphResource res)
         {
@@ -499,6 +509,11 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
 
                 resource.ReleasePooledGraphicsResource(m_CurrentFrameIndex);
             }
+        }
+
+        internal void ReleasePooledResource(RenderGraphContext rgContext, ResourceHandle handle)
+        {
+            ReleasePooledResource(rgContext, handle.iType, handle.index);
         }
 
         void ReleaseTextureCallback(RenderGraphContext rgContext, IRenderGraphResource res)

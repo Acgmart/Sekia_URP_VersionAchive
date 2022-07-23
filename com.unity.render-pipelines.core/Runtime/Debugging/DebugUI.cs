@@ -126,7 +126,7 @@ namespace UnityEngine.Rendering
             /// <returns>The hash code of the widget.</returns>
             public override int GetHashCode()
             {
-                return queryPath.GetHashCode();
+                return queryPath.GetHashCode() ^ isHidden.GetHashCode();
             }
 
             /// <summary>
@@ -134,7 +134,13 @@ namespace UnityEngine.Rendering
             /// </summary>
             public struct NameAndTooltip
             {
+                /// <summary>
+                /// The name
+                /// </summary>
                 public string name;
+                /// <summary>
+                /// The tooltip
+                /// </summary>
                 public string tooltip;
             }
 

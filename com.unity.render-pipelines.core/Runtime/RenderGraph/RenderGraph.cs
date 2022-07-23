@@ -644,6 +644,7 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
         /// </code>
         /// </example>
         /// <seealso cref="RenderGraphExecution"/>
+        /// <returns><see cref="RenderGraphExecution"/></returns>
         public RenderGraphExecution RecordAndExecute(in RenderGraphParameters parameters)
         {
             m_CurrentFrameIndex = parameters.currentFrameIndex;
@@ -1141,9 +1142,8 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
                             int currentPassIndex = lastReadPassIndex;
                             int firstWaitingPassIndex = m_CompiledPassInfos[currentPassIndex].syncFromPassIndex;
                             // Find the first async pass that is synchronized by the graphics pipeline (ie: passInfo.syncFromPassIndex != -1)
-                            while (firstWaitingPassIndex == -1 && currentPassIndex < m_CompiledPassInfos.size)
+                            while (firstWaitingPassIndex == -1 && currentPassIndex++ < m_CompiledPassInfos.size - 1)
                             {
-                                currentPassIndex++;
                                 if (m_CompiledPassInfos[currentPassIndex].enableAsyncCompute)
                                     firstWaitingPassIndex = m_CompiledPassInfos[currentPassIndex].syncFromPassIndex;
                             }
@@ -1156,7 +1156,13 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
                             if (currentPassIndex == m_CompiledPassInfos.size)
                             {
                                 RenderGraphPass invalidPass = m_RenderPasses[lastReadPassIndex];
-                                throw new InvalidOperationException($"Asynchronous pass {invalidPass.name} was never synchronized on the graphics pipeline.");
+
+                                var resName = "<unknown>";
+#if DEVELOPMENT_BUILD || UNITY_EDITOR
+                                resName = m_Resources.GetRenderGraphResourceName((RenderGraphResourceType)type, i);
+#endif
+                                var msg = $"{(RenderGraphResourceType)type} resource '{resName}' in asynchronous pass '{invalidPass.name}' is missing synchronization on the graphics pipeline.";
+                                throw new InvalidOperationException(msg);
                             }
                         }
                         else
@@ -1419,12 +1425,12 @@ namespace UnityEngine.Experimental.Rendering.RenderGraphModule
 
             PreRenderPassSetRenderTargets(passInfo, rgContext);
 
-            // Flush first the current command buffer on the render context.
-            rgContext.renderContext.ExecuteCommandBuffer(rgContext.cmd);
-            rgContext.cmd.Clear();
-
             if (passInfo.enableAsyncCompute)
             {
+                // Flush current command buffer on the render context before enqueuing async commands.
+                rgContext.renderContext.ExecuteCommandBuffer(rgContext.cmd);
+                rgContext.cmd.Clear();
+
                 CommandBuffer asyncCmd = CommandBufferPool.Get(pass.name);
                 asyncCmd.SetExecutionFlags(CommandBufferExecutionFlags.AsyncCompute);
                 rgContext.cmd = asyncCmd;

@@ -7,7 +7,10 @@ using System.Reflection;
 using System.Text;
 using UnityEditor.AnimatedValues;
 using UnityEngine;
+using UnityEngine.Assertions;
 using UnityEngine.Rendering;
+using UnityEngine.SceneManagement;
+using UnityEditor.PackageManager;
 
 namespace UnityEditor.Rendering
 {
@@ -304,10 +307,10 @@ namespace UnityEditor.Rendering
 
             EditorGUIUtility.labelWidth = labelWidth;
         }
-
         /// <summary>
         /// Draw a multiple field property
         /// </summary>
+        /// <typeparam name="T">A valid <see cref="struct"/></typeparam>
         /// <param name="label">Label of the whole</param>
         /// <param name="labels">The labels mapping the values</param>
         /// <param name="values">The values to be displayed</param>
@@ -714,7 +717,6 @@ namespace UnityEditor.Rendering
         /// <param name="contextAction">The context action</param>
         /// <param name="hasMoreOptions">Delegate saying if we have MoreOptions</param>
         /// <param name="toggleMoreOptions">Callback called when the MoreOptions is toggled</param>
-        /// <returns>return the state of the foldout header</returns>
         public static void DrawSectionHeader(GUIContent title, string documentationURL = null, Action<Vector2> contextAction = null, Func<bool> hasMoreOptions = null, Action toggleMoreOptions = null)
         {
             var backgroundRect = EditorGUI.IndentedRect(GUILayoutUtility.GetRect(1f, 17f));
@@ -1267,6 +1269,53 @@ namespace UnityEditor.Rendering
         internal static void EndAdditionalPropertiesHighlight()
         {
             EditorGUILayout.EndVertical();
+        }
+
+        internal static T CreateAssetAt<T>(Scene scene, string targetName) where T : ScriptableObject
+        {
+            string path;
+
+            if (string.IsNullOrEmpty(scene.path))
+            {
+                path = "Assets/";
+            }
+            else
+            {
+                var scenePath = Path.GetDirectoryName(scene.path);
+                var extPath = scene.name;
+                var profilePath = scenePath + Path.DirectorySeparatorChar + extPath;
+
+                if (!AssetDatabase.IsValidFolder(profilePath))
+                {
+                    var directories = profilePath.Split(Path.DirectorySeparatorChar);
+                    string rootPath = "";
+                    foreach (var directory in directories)
+                    {
+                        var newPath = rootPath + directory;
+                        if (!AssetDatabase.IsValidFolder(newPath))
+                            AssetDatabase.CreateFolder(rootPath.TrimEnd(Path.DirectorySeparatorChar), directory);
+                        rootPath = newPath + Path.DirectorySeparatorChar;
+                    }
+                }
+
+                path = profilePath + Path.DirectorySeparatorChar;
+            }
+
+            path += targetName.ReplaceInvalidFileNameCharacters() + ".asset";
+            path = AssetDatabase.GenerateUniqueAssetPath(path);
+
+            var profile = ScriptableObject.CreateInstance<T>();
+            AssetDatabase.CreateAsset(profile, path);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            return profile;
+        }
+
+        internal static bool IsAssetInReadOnlyPackage(string path)
+        {
+            Assert.IsNotNull(path);
+            var info = PackageManager.PackageInfo.FindForAssetPath(path);
+            return info != null && (info.source != PackageSource.Local && info.source != PackageSource.Embedded);
         }
     }
 }
