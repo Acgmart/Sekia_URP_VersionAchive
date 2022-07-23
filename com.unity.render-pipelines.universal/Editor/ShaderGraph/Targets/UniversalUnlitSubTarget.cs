@@ -13,7 +13,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
     {
         static readonly GUID kSourceCodeGuid = new GUID("97c3f7dcb477ec842aa878573640313a"); // UniversalUnlitSubTarget.cs
 
-        public override int latestVersion => 1;
+        public override int latestVersion => 2;
 
         public UniversalUnlitSubTarget()
         {
@@ -97,6 +97,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 collector.AddFloatProperty(Property.ZWriteControl, (float)target.zWriteControl);
                 collector.AddFloatProperty(Property.ZTest, (float)target.zTestMode);    // ztest mode is designed to directly pass as ztest
                 collector.AddFloatProperty(Property.CullMode, (float)target.renderFace);    // render face enum is designed to directly pass as a cull mode
+
+                bool enableAlphaToMask = (target.alphaClip && (target.surfaceType == SurfaceType.Opaque));
+                collector.AddFloatProperty(Property.AlphaToMask, enableAlphaToMask ? 1.0f : 0.0f);
             }
 
             // We always need these properties regardless of whether the material is allowed to override other shader properties.
@@ -167,7 +170,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     passes = new PassCollection()
                 };
 
-                result.passes.Add(UnlitPasses.Forward(target));
+                result.passes.Add(UnlitPasses.Forward(target, UnlitKeywords.Forward));
 
                 if (target.mayWriteDepth)
                     result.passes.Add(CorePasses.DepthOnly(target));
@@ -181,8 +184,6 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 // UI shaders to render correctly. Verify [1352225] before changing this order.
                 result.passes.Add(CorePasses.SceneSelection(target));
                 result.passes.Add(CorePasses.ScenePicking(target));
-
-                result.passes.Add(UnlitPasses.DepthNormalOnly(target));
 
                 return result;
             }
@@ -199,22 +200,20 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     passes = new PassCollection()
                 };
 
-                result.passes.Add(PassVariant(UnlitPasses.Forward(target), CorePragmas.DOTSForward));
+                result.passes.Add(PassVariant(UnlitPasses.Forward(target, UnlitKeywords.DOTSForward), CorePragmas.ForwardSM45));
 
                 if (target.mayWriteDepth)
-                    result.passes.Add(PassVariant(CorePasses.DepthOnly(target), CorePragmas.DOTSInstanced));
+                    result.passes.Add(PassVariant(CorePasses.DepthOnly(target), CorePragmas.InstancedSM45));
 
-                result.passes.Add(PassVariant(CorePasses.DepthNormalOnly(target), CorePragmas.DOTSInstanced));
+                result.passes.Add(PassVariant(UnlitPasses.DepthNormalOnly(target), CorePragmas.InstancedSM45));
 
                 if (target.castShadows || target.allowMaterialOverride)
-                    result.passes.Add(PassVariant(CorePasses.ShadowCaster(target), CorePragmas.DOTSInstanced));
+                    result.passes.Add(PassVariant(CorePasses.ShadowCaster(target), CorePragmas.InstancedSM45));
 
                 // Currently neither of these passes (selection/picking) can be last for the game view for
                 // UI shaders to render correctly. Verify [1352225] before changing this order.
-                result.passes.Add(PassVariant(CorePasses.SceneSelection(target), CorePragmas.DOTSDefault));
-                result.passes.Add(PassVariant(CorePasses.ScenePicking(target), CorePragmas.DOTSDefault));
-
-                result.passes.Add(PassVariant(UnlitPasses.DepthNormalOnly(target), CorePragmas.DOTSInstanced));
+                result.passes.Add(PassVariant(CorePasses.SceneSelection(target), CorePragmas.DefaultSM45));
+                result.passes.Add(PassVariant(CorePasses.ScenePicking(target), CorePragmas.DefaultSM45));
 
                 return result;
             }
@@ -224,7 +223,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         #region Pass
         static class UnlitPasses
         {
-            public static PassDescriptor Forward(UniversalTarget target)
+            public static PassDescriptor Forward(UniversalTarget target, KeywordCollection keywords)
             {
                 var result = new PassDescriptor
                 {
@@ -250,7 +249,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     renderStates = CoreRenderStates.UberSwitchedRenderState(target),
                     pragmas = CorePragmas.Forward,
                     defines = new DefineCollection() { CoreDefines.UseFragmentFog },
-                    keywords = new KeywordCollection() { UnlitKeywords.UnlitBaseKeywords },
+                    keywords = new KeywordCollection() { keywords },
                     includes = UnlitIncludes.Unlit,
 
                     // Custom Interpolator Support
@@ -258,6 +257,8 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 };
 
                 CorePasses.AddTargetSurfaceControlsToPass(ref result, target);
+                CorePasses.AddAlphaToMaskControlToPass(ref result, target);
+                CorePasses.AddLODCrossFadeControlToPass(ref result, target);
 
                 return result;
             }
@@ -267,7 +268,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 var result = new PassDescriptor
                 {
                     // Definition
-                    displayName = "DepthNormals",
+                    displayName = "DepthNormalsOnly",
                     referenceName = "SHADERPASS_DEPTHNORMALSONLY",
                     lightMode = "DepthNormalsOnly",
                     useInPreview = false,
@@ -289,7 +290,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     renderStates = CoreRenderStates.DepthNormalsOnly(target),
                     pragmas = CorePragmas.Forward,
                     defines = new DefineCollection(),
-                    keywords = new KeywordCollection(),
+                    keywords = new KeywordCollection() { CoreKeywords.DOTSDepthNormal, CoreKeywordDescriptors.GBufferNormalsOct },
                     includes = CoreIncludes.DepthNormalsOnly,
 
                     // Custom Interpolator Support
@@ -297,6 +298,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 };
 
                 CorePasses.AddTargetSurfaceControlsToPass(ref result, target);
+                CorePasses.AddLODCrossFadeControlToPass(ref result, target);
 
                 return result;
             }
@@ -334,7 +336,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         #region Keywords
         static class UnlitKeywords
         {
-            public static readonly KeywordCollection UnlitBaseKeywords = new KeywordCollection()
+            public static readonly KeywordCollection Forward = new KeywordCollection()
             {
                 // This contain lightmaps because without a proper custom lighting solution in Shadergraph,
                 // people start with the unlit then add lightmapping nodes to it.
@@ -344,6 +346,13 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 CoreKeywordDescriptors.SampleGI,
                 CoreKeywordDescriptors.DBuffer,
                 CoreKeywordDescriptors.DebugDisplay,
+                CoreKeywordDescriptors.ScreenSpaceAmbientOcclusion,
+            };
+
+            public static readonly KeywordCollection DOTSForward = new KeywordCollection
+            {
+                { Forward },
+                { CoreKeywordDescriptors.WriteRenderingLayers },
             };
         }
         #endregion

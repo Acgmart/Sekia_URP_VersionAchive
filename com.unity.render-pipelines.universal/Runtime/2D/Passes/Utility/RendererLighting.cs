@@ -97,7 +97,7 @@ namespace UnityEngine.Rendering.Universal
                 descriptor.graphicsFormat = GetRenderTextureFormat();
                 descriptor.useMipMap = false;
                 descriptor.autoGenerateMips = false;
-                descriptor.depthBufferBits = pass.rendererData.useDepthStencilBuffer ? 32 : 0;
+                descriptor.depthBufferBits = pass.rendererData.useDepthStencilBuffer ? Renderer2D.k_DepthBufferBits : 0;
                 descriptor.msaaSamples = renderingData.cameraData.cameraTargetDescriptor.msaaSamples;
                 descriptor.dimension = TextureDimension.Tex2D;
 
@@ -508,8 +508,9 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
-        public static void RenderNormals(this IRenderPass2D pass, ScriptableRenderContext context, RenderingData renderingData, DrawingSettings drawSettings, FilteringSettings filterSettings, RenderTargetIdentifier depthTarget, CommandBuffer cmd, LightStats lightStats)
+        public static void RenderNormals(this IRenderPass2D pass, ScriptableRenderContext context, RenderingData renderingData, DrawingSettings drawSettings, FilteringSettings filterSettings, RenderTargetIdentifier depthTarget, LightStats lightStats)
         {
+            var cmd = renderingData.commandBuffer;
             using (new ProfilingScope(cmd, m_ProfilingSampler))
             {
                 // figure out the scale

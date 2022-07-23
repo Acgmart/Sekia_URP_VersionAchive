@@ -5,7 +5,7 @@ namespace UnityEditor.Rendering.Universal
 {
     partial class UniversalRenderPipelineLightUI
     {
-        static class Styles
+        private static class Styles
         {
             public static readonly GUIContent Type = EditorGUIUtility.TrTextContent("Type", "Specifies the current type of light. Possible types are Directional, Spot, Point, and Area lights.");
 
@@ -45,6 +45,8 @@ namespace UnityEditor.Rendering.Universal
                 UniversalRenderPipelineAssetUI.Styles.additionalLightsShadowResolutionTierNames[2],
             };
 
+            public static GUIContent SoftShadowQuality = EditorGUIUtility.TrTextContent("Soft Shadows Quality", "Controls the filtering quality of soft shadows. Higher quality has lower performance.");
+
             // Bias (default or custom)
             public static GUIContent shadowBias = EditorGUIUtility.TrTextContent("Bias", "Select if the Bias should use the settings from the Pipeline Asset or Custom settings.");
             public static int[] optionDefaultValues = { 0, 1 };
@@ -59,6 +61,8 @@ namespace UnityEditor.Rendering.Universal
 
             public static readonly GUIContent LightCookieSize = EditorGUIUtility.TrTextContent("Cookie Size", "Controls the size of the cookie mask currently assigned to the light.");
             public static readonly GUIContent LightCookieOffset = EditorGUIUtility.TrTextContent("Cookie Offset", "Controls the offset of the cookie mask currently assigned to the light.");
+            /// <summary>Title with "Rendering Layer"</summary>
+            public static readonly GUIContent RenderingLayers = EditorGUIUtility.TrTextContent("Rendering Layers", "Select the Rendering Layers that the Light affects. This Light affects objects where at least one Rendering Layer value matches.");
         }
     }
 }

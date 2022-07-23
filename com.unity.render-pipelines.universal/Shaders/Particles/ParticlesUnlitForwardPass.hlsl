@@ -21,9 +21,7 @@ void InitializeInputData(VaryingsParticle input, SurfaceData surfaceData, out In
 
     inputData.normalWS = NormalizeNormalPerPixel(inputData.normalWS);
 
-#if SHADER_HINT_NICE_QUALITY
     viewDirWS = SafeNormalize(viewDirWS);
-#endif
 
     inputData.viewDirectionWS = viewDirWS;
 
@@ -63,7 +61,6 @@ void InitializeSurfaceData(ParticleParams particleParams, out SurfaceData surfac
     surfaceData.smoothness = 1;
     surfaceData.occlusion = 1;
 
-    surfaceData.albedo = AlphaModulateAndPremultiply(surfaceData.albedo, albedo.a);
     surfaceData.alpha = albedo.a;
 
     surfaceData.clearCoatMask       = 0;
@@ -147,7 +144,7 @@ half4 fragParticleUnlit(VaryingsParticle input) : SV_Target
     #endif
 
     finalColor.rgb = MixFog(finalColor.rgb, inputData.fogCoord);
-    finalColor.a = OutputAlpha(finalColor.a, _Surface);
+    finalColor.a = OutputAlpha(finalColor.a, IsSurfaceTypeTransparent(_Surface));
 
     return finalColor;
 }

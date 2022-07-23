@@ -26,6 +26,7 @@ namespace UnityEditor.Rendering.Universal
             Lighting = 1 << 2,
             PostProcessing = 1 << 3,
             Shadows = 1 << 4,
+            Quality = 1 << 5,
         }
 
         internal static void RegisterEditor(UniversalRenderPipelineAssetEditor editor)
@@ -97,12 +98,17 @@ namespace UnityEditor.Rendering.Universal
             return unsupportedGraphicsApisMessage == null;
         }
 
+        static bool ValidateCrossFadeDitheringTextures(UniversalRenderPipelineAsset pipelineAsset)
+        {
+            return pipelineAsset.textures?.bayerMatrixTex && pipelineAsset.textures?.blueNoise64LTex;
+        }
+
         static readonly ExpandedState<Expandable, UniversalRenderPipelineAsset> k_ExpandedState = new(Expandable.Rendering, "URP");
         readonly static AdditionalPropertiesState<ExpandableAdditional, Light> k_AdditionalPropertiesState = new(0, "URP");
 
         public static readonly CED.IDrawer Inspector = CED.Group(
             CED.AdditionalPropertiesFoldoutGroup(Styles.renderingSettingsText, Expandable.Rendering, k_ExpandedState, ExpandableAdditional.Rendering, k_AdditionalPropertiesState, DrawRendering, DrawRenderingAdditional),
-            CED.FoldoutGroup(Styles.qualitySettingsText, Expandable.Quality, k_ExpandedState, CED.Group(DrawQuality)),
+            CED.AdditionalPropertiesFoldoutGroup(Styles.qualitySettingsText, Expandable.Quality, k_ExpandedState, ExpandableAdditional.Quality, k_AdditionalPropertiesState, DrawQuality, DrawQualityAdditional),
             CED.AdditionalPropertiesFoldoutGroup(Styles.lightingSettingsText, Expandable.Lighting, k_ExpandedState, ExpandableAdditional.Lighting, k_AdditionalPropertiesState, DrawLighting, DrawLightingAdditional),
             CED.AdditionalPropertiesFoldoutGroup(Styles.shadowSettingsText, Expandable.Shadows, k_ExpandedState, ExpandableAdditional.Shadows, k_AdditionalPropertiesState, DrawShadows, DrawShadowsAdditional),
             CED.AdditionalPropertiesFoldoutGroup(Styles.postProcessingSettingsText, Expandable.PostProcessing, k_ExpandedState, ExpandableAdditional.PostProcessing, k_AdditionalPropertiesState, DrawPostProcessing, DrawPostProcessingAdditional)
@@ -139,15 +145,56 @@ namespace UnityEditor.Rendering.Universal
             EditorGUILayout.PropertyField(serialized.srpBatcher, Styles.srpBatcher);
             EditorGUILayout.PropertyField(serialized.supportsDynamicBatching, Styles.dynamicBatching);
             EditorGUILayout.PropertyField(serialized.debugLevelProp, Styles.debugLevel);
-            EditorGUILayout.PropertyField(serialized.shaderVariantLogLevel, Styles.shaderVariantLogLevel);
             EditorGUILayout.PropertyField(serialized.storeActionsOptimizationProperty, Styles.storeActionsOptimizationText);
         }
 
         static void DrawQuality(SerializedUniversalRenderPipelineAsset serialized, Editor ownerEditor)
         {
-            EditorGUILayout.PropertyField(serialized.hdr, Styles.hdrText);
+            DrawHDR(serialized, ownerEditor);
+
             EditorGUILayout.PropertyField(serialized.msaa, Styles.msaaText);
             serialized.renderScale.floatValue = EditorGUILayout.Slider(Styles.renderScaleText, serialized.renderScale.floatValue, UniversalRenderPipeline.minRenderScale, UniversalRenderPipeline.maxRenderScale);
+            EditorGUILayout.PropertyField(serialized.upscalingFilter, Styles.upscalingFilterText);
+            if (serialized.asset.upscalingFilter == UpscalingFilterSelection.FSR)
+            {
+                ++EditorGUI.indentLevel;
+
+                EditorGUILayout.PropertyField(serialized.fsrOverrideSharpness, Styles.fsrOverrideSharpness);
+
+                // We put the FSR sharpness override value behind an override checkbox so we can tell when the user intends to use a custom value rather than the default.
+                if (serialized.fsrOverrideSharpness.boolValue)
+                {
+                    serialized.fsrSharpness.floatValue = EditorGUILayout.Slider(Styles.fsrSharpnessText, serialized.fsrSharpness.floatValue, 0.0f, 1.0f);
+                }
+
+                --EditorGUI.indentLevel;
+            }
+            EditorGUILayout.PropertyField(serialized.enableLODCrossFadeProp, Styles.enableLODCrossFadeText);
+            EditorGUI.BeginDisabledGroup(!serialized.enableLODCrossFadeProp.boolValue);
+            EditorGUILayout.PropertyField(serialized.lodCrossFadeDitheringTypeProp, Styles.lodCrossFadeDitheringTypeText);
+            if (!ValidateCrossFadeDitheringTextures(serialized.asset))
+                CoreEditorUtils.DrawFixMeBox("Asset doesn't hold references to dithering textures. LOD Cross Fade might not work correctly.",
+                    () => ResourceReloader.ReloadAllNullIn(serialized.asset, UniversalRenderPipelineAsset.packagePath));
+            EditorGUI.EndDisabledGroup();
+        }
+
+        static void DrawQualityAdditional(SerializedUniversalRenderPipelineAsset serialized, Editor ownerEditor)
+        {
+            // Nothing yet, just to satisfy `AdditionalPropertiesFoldoutGroup`
+        }
+
+        static void DrawHDR(SerializedUniversalRenderPipelineAsset serialized, Editor ownerEditor)
+        {
+            EditorGUILayout.PropertyField(serialized.hdr, Styles.hdrText);
+
+            // Nested and in-between additional property
+            bool additionalProperties = k_ExpandedState[Expandable.Quality] && k_AdditionalPropertiesState[ExpandableAdditional.Quality];
+            if (serialized.hdr.boolValue && additionalProperties)
+            {
+                EditorGUI.indentLevel++;
+                EditorGUILayout.PropertyField(serialized.hdrColorBufferPrecisionProp, Styles.hdrColorBufferPrecisionText);
+                EditorGUI.indentLevel--;
+            }
         }
 
         static void DrawLighting(SerializedUniversalRenderPipelineAsset serialized, Editor ownerEditor)
@@ -218,9 +265,9 @@ namespace UnityEditor.Rendering.Universal
         static void DrawLightingAdditional(SerializedUniversalRenderPipelineAsset serialized, Editor ownerEditor)
         {
             EditorGUILayout.PropertyField(serialized.mixedLightingSupportedProp, Styles.mixedLightingSupportLabel);
-            EditorGUILayout.PropertyField(serialized.supportsLightLayers, Styles.supportsLightLayers);
+            EditorGUILayout.PropertyField(serialized.useRenderingLayers, Styles.useRenderingLayers);
 
-            if (serialized.supportsLightLayers.boolValue && !ValidateRendererGraphicsAPIsForLightLayers(serialized.asset, out var unsupportedGraphicsApisMessage))
+            if (serialized.useRenderingLayers.boolValue && !ValidateRendererGraphicsAPIsForLightLayers(serialized.asset, out var unsupportedGraphicsApisMessage))
                 EditorGUILayout.HelpBox(Styles.lightlayersUnsupportedMessage.text + unsupportedGraphicsApisMessage, MessageType.Warning, true);
         }
 
@@ -276,7 +323,25 @@ namespace UnityEditor.Rendering.Universal
                 }
             }
 
+            // Detect if we are targeting GLES2, so we can warn users about the lack of cascades on that platform
+
+            BuildTarget platform = EditorUserBuildSettings.activeBuildTarget;
+            GraphicsDeviceType[] graphicsAPIs = PlayerSettings.GetGraphicsAPIs(platform);
+
+            bool usingGLES2 = false;
+            for (int apiIndex = 0; apiIndex < graphicsAPIs.Length; apiIndex++)
+            {
+                if (graphicsAPIs[apiIndex] == GraphicsDeviceType.OpenGLES2)
+                {
+                    usingGLES2 = true;
+                    break;
+                }
+            }
+
             EditorGUILayout.IntSlider(serialized.shadowCascadeCountProp, UniversalRenderPipelineAsset.k_ShadowCascadeMinCount, UniversalRenderPipelineAsset.k_ShadowCascadeMaxCount, Styles.shadowCascadesText);
+
+            if (usingGLES2)
+                EditorGUILayout.HelpBox(Styles.shadowCascadesUnsupportedMessage.text, MessageType.Info);
 
             int cascadeCount = serialized.shadowCascadeCountProp.intValue;
             EditorGUI.indentLevel++;

@@ -5,6 +5,7 @@ using System.ComponentModel;
 using Unity.Collections;
 using UnityEngine.Scripting.APIUpdating;
 using UnityEngine.Experimental.Rendering;
+using UnityEngine.Experimental.Rendering.RenderGraphModule;
 
 namespace UnityEngine.Rendering.Universal
 {
@@ -15,11 +16,30 @@ namespace UnityEngine.Rendering.Universal
     [Flags]
     public enum ScriptableRenderPassInput
     {
+        /// <summary>
+        /// Used when a <c>ScriptableRenderPass</c> does not require any texture.
+        /// </summary>
         None = 0,
+
+        /// <summary>
+        /// Used when a <c>ScriptableRenderPass</c> requires a depth texture.
+        /// </summary>
         Depth = 1 << 0,
+
+        /// <summary>
+        /// Used when a <c>ScriptableRenderPass</c> requires a normal texture.
+        /// </summary>
         Normal = 1 << 1,
+
+        /// <summary>
+        /// Used when a <c>ScriptableRenderPass</c> requires a color texture.
+        /// </summary>
         Color = 1 << 2,
-        Motion = 1 << 3
+
+        /// <summary>
+        /// Used when a <c>ScriptableRenderPass</c> requires a motion vectors texture.
+        /// </summary>
+        Motion = 1 << 3,
     }
 
     // Note: Spaced built-in events so we can add events in between them
@@ -54,10 +74,6 @@ namespace UnityEngine.Rendering.Universal
         /// Camera matrices and stereo rendering are already setup at this point.
         /// </summary>
         BeforeRenderingPrePasses = 150,
-
-        [EditorBrowsable(EditorBrowsableState.Never)]
-        [Obsolete("Obsolete, to match the capital from 'Prepass' to 'PrePass' (UnityUpgradable) -> BeforeRenderingPrePasses")]
-        BeforeRenderingPrepasses = 151,
 
         /// <summary>
         /// Executes a <c>ScriptableRenderPass</c> after rendering prepasses, f.ex, depth prepass.
@@ -131,6 +147,26 @@ namespace UnityEngine.Rendering.Universal
         AfterRendering = 1000,
     }
 
+    internal static class RenderPassEventsEnumValues
+    {
+        // we cache the values in this array at construction time to avoid runtime allocations, which we would cause if we accessed valuesInternal directly
+        public static int[] values;
+
+        static RenderPassEventsEnumValues()
+        {
+            System.Array valuesInternal = Enum.GetValues(typeof(RenderPassEvent));
+
+            values = new int[valuesInternal.Length];
+
+            int index = 0;
+            foreach (int value in valuesInternal)
+            {
+                values[index] = value;
+                index++;
+            }
+        }
+    }
+
     /// <summary>
     /// <c>ScriptableRenderPass</c> implements a logical rendering pass that can be used to extend Universal RP renderer.
     /// </summary>
@@ -141,6 +177,9 @@ namespace UnityEngine.Rendering.Universal
         /// </summary>
         static public RTHandle k_CameraTarget = RTHandles.Alloc(BuiltinRenderTextureType.CameraTarget);
 
+        /// <summary>
+        /// The event when the render pass executes.
+        /// </summary>
         public RenderPassEvent renderPassEvent { get; set; }
 
         [Obsolete("Use colorAttachmentHandles")]
@@ -185,11 +224,17 @@ namespace UnityEngine.Rendering.Universal
             get => m_DepthAttachment;
         }
 
+        /// <summary>
+        /// The store actions for Color.
+        /// </summary>
         public RenderBufferStoreAction[] colorStoreActions
         {
             get => m_ColorStoreActions;
         }
 
+        /// <summary>
+        /// The store actions for Depth.
+        /// </summary>
         public RenderBufferStoreAction depthStoreAction
         {
             get => m_DepthStoreAction;
@@ -214,11 +259,18 @@ namespace UnityEngine.Rendering.Universal
             get => m_Input;
         }
 
+        /// <summary>
+        /// The flag to use when clearing.
+        /// </summary>
+        /// <seealso cref="ClearFlag"/>
         public ClearFlag clearFlag
         {
             get => m_ClearFlag;
         }
 
+        /// <summary>
+        /// The color value to use when clearing.
+        /// </summary>
         public Color clearColor
         {
             get => m_ClearColor;
@@ -243,13 +295,6 @@ namespace UnityEngine.Rendering.Universal
 
         internal bool useNativeRenderPass { get; set; }
 
-        internal int renderTargetWidth { get; set; }
-        internal int renderTargetHeight { get; set; }
-        internal int renderTargetSampleCount { get; set; }
-
-        internal bool depthOnly { get; set; }
-        // this flag is updated each frame to keep track of which pass is the last for the current camera
-        internal bool isLastPass { get; set; }
         // index to track the position in the current frame
         internal int renderPassQueueIndex { get; set; }
 
@@ -270,7 +315,7 @@ namespace UnityEngine.Rendering.Universal
         ClearFlag m_ClearFlag = ClearFlag.None;
         Color m_ClearColor = Color.black;
 
-        internal DebugHandler GetActiveDebugHandler(RenderingData renderingData)
+        static internal DebugHandler GetActiveDebugHandler(ref RenderingData renderingData)
         {
             var debugHandler = renderingData.cameraData.renderer.DebugHandler;
             if ((debugHandler != null) && debugHandler.IsActiveForCamera(ref renderingData.cameraData))
@@ -278,6 +323,9 @@ namespace UnityEngine.Rendering.Universal
             return null;
         }
 
+        /// <summary>
+        /// Creates a new <c>ScriptableRenderPass"</c> instance.
+        /// </summary>
         public ScriptableRenderPass()
         {
             m_UsesRTHandles = true;
@@ -299,16 +347,12 @@ namespace UnityEngine.Rendering.Universal
             isBlitRenderPass = false;
             profilingSampler = new ProfilingSampler($"Unnamed_{nameof(ScriptableRenderPass)}");
             useNativeRenderPass = true;
-            renderTargetWidth = -1;
-            renderTargetHeight = -1;
-            renderTargetSampleCount = -1;
             renderPassQueueIndex = -1;
             renderTargetFormat = new GraphicsFormat[]
             {
                 GraphicsFormat.None, GraphicsFormat.None, GraphicsFormat.None,
                 GraphicsFormat.None, GraphicsFormat.None, GraphicsFormat.None, GraphicsFormat.None, GraphicsFormat.None
             };
-            depthOnly = false;
         }
 
         /// <summary>
@@ -363,12 +407,6 @@ namespace UnityEngine.Rendering.Universal
             m_InputAttachmentIsTransient[0] = isTransient;
         }
 
-        [Obsolete("Use RTHandle for input")]
-        internal void ConfigureInputAttachments(RenderTargetIdentifier input)
-        {
-            m_InputAttachments[0] = RTHandles.Alloc(input);
-        }
-
         internal void ConfigureInputAttachments(RTHandle[] inputs)
         {
             m_InputAttachments = inputs;
@@ -390,22 +428,27 @@ namespace UnityEngine.Rendering.Universal
             return m_InputAttachmentIsTransient[idx];
         }
 
-        [Obsolete("Use RTHandles for inputs")]
-        internal void ConfigureInputAttachments(RenderTargetIdentifier[] inputs)
+        /// <summary>
+        /// Resets render targets to default.
+        /// This method effectively reset changes done by ConfigureTarget.
+        /// </summary>
+        /// <seealso cref="ConfigureTarget"/>
+        public void ResetTarget()
         {
-            for (int i = 0; i < inputs.Length; ++i)
-            {
-                if (m_InputAttachments[i] == null || m_InputAttachments[i].nameID != inputs[i])
-                {
-                    m_InputAttachments[i]?.Release();
-                    m_InputAttachments[i] = RTHandles.Alloc(inputs[i]);
-                }
-            }
+            overrideCameraTarget = false;
+            m_UsesRTHandles = true;
 
-            for (int i = inputs.Length; i < m_InputAttachments.Length; ++i)
+            // Reset depth
+            m_DepthAttachmentId = -1;
+            m_DepthAttachment = null;
+
+            // Reset colors
+            m_ColorAttachments[0] = null;
+            m_ColorAttachmentIds[0] = -1;
+            for (int i = 1; i < m_ColorAttachments.Length; ++i)
             {
-                m_InputAttachments[i]?.Release();
-                m_InputAttachments[i] = null;
+                m_ColorAttachments[i] = null;
+                m_ColorAttachmentIds[i] = 0;
             }
         }
 
@@ -438,26 +481,11 @@ namespace UnityEngine.Rendering.Universal
             ConfigureTarget(colorAttachment);
         }
 
-        [Obsolete("Use RTHandles for colorAttachment and depthAttachment")]
-        internal void ConfigureTarget(RenderTargetIdentifier colorAttachment, RenderTargetIdentifier depthAttachment, GraphicsFormat format)
-        {
-            m_DepthAttachment = null;
-            m_DepthAttachmentId = depthAttachment;
-            ConfigureTarget(colorAttachment, format);
-        }
-
-        internal void ConfigureTarget(RTHandle colorAttachment, RTHandle depthAttachment, GraphicsFormat format)
-        {
-            m_DepthAttachment = depthAttachment;
-            m_DepthAttachmentId = m_DepthAttachment.nameID;
-            ConfigureTarget(colorAttachment, format);
-        }
-
         /// <summary>
         /// Configures render targets for this render pass. Call this instead of CommandBuffer.SetRenderTarget.
         /// This method should be called inside Configure.
         /// </summary>
-        /// <param name="colorAttachment">Color attachment identifier.</param>
+        /// <param name="colorAttachments">Color attachment identifier.</param>
         /// <param name="depthAttachment">Depth attachment identifier.</param>
         /// <seealso cref="Configure"/>
         [Obsolete("Use RTHandles for colorAttachments and depthAttachment")]
@@ -478,7 +506,7 @@ namespace UnityEngine.Rendering.Universal
         /// Configures render targets for this render pass. Call this instead of CommandBuffer.SetRenderTarget.
         /// This method should be called inside Configure.
         /// </summary>
-        /// <param name="colorAttachment">Color attachment handle.</param>
+        /// <param name="colorAttachments">Color attachment handle.</param>
         /// <param name="depthAttachment">Depth attachment handle.</param>
         /// <seealso cref="Configure"/>
         public void ConfigureTarget(RTHandle[] colorAttachments, RTHandle depthAttachment)
@@ -497,14 +525,6 @@ namespace UnityEngine.Rendering.Universal
                 m_ColorAttachmentIds[i] = new RenderTargetIdentifier(colorAttachments[i].nameID, 0, CubemapFace.Unknown, -1);
             m_DepthAttachmentId = depthAttachment.nameID;
             m_DepthAttachment = depthAttachment;
-        }
-
-        [Obsolete("Use RTHandles for colorAttachments and depthAttachment")]
-        internal void ConfigureTarget(RenderTargetIdentifier[] colorAttachments, RenderTargetIdentifier depthAttachment, GraphicsFormat[] formats)
-        {
-            ConfigureTarget(colorAttachments, depthAttachment);
-            for (int i = 0; i < formats.Length; ++i)
-                renderTargetFormat[i] = formats[i];
         }
 
         internal void ConfigureTarget(RTHandle[] colorAttachments, RTHandle depthAttachment, GraphicsFormat[] formats)
@@ -551,44 +571,6 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
-        [Obsolete("Use RTHandle for colorAttachment")]
-        internal void ConfigureTarget(RenderTargetIdentifier colorAttachment, GraphicsFormat format, int width = -1, int height = -1, int sampleCount = -1, bool depth = false)
-        {
-            ConfigureTarget(colorAttachment);
-            for (int i = 1; i < m_ColorAttachments.Length; ++i)
-                renderTargetFormat[i] = GraphicsFormat.None;
-
-            if (depth == true && !GraphicsFormatUtility.IsDepthFormat(format))
-                throw new ArgumentException("When configuring a depth only target the passed in format must be a depth format.");
-
-            renderTargetWidth = width;
-            renderTargetHeight = height;
-            renderTargetSampleCount = sampleCount;
-            depthOnly = depth;
-            renderTargetFormat[0] = format;
-        }
-
-        internal void ConfigureTarget(RTHandle colorAttachment, GraphicsFormat format, int width = -1, int height = -1, int sampleCount = -1, bool depth = false)
-        {
-            ConfigureTarget(colorAttachment);
-            for (int i = 1; i < m_ColorAttachments.Length; ++i)
-                renderTargetFormat[i] = GraphicsFormat.None;
-
-            if (depth == true && !GraphicsFormatUtility.IsDepthFormat(format))
-                throw new ArgumentException("When configuring a depth only target the passed in format must be a depth format.");
-
-            renderTargetWidth = width;
-            renderTargetHeight = height;
-            renderTargetSampleCount = sampleCount;
-            depthOnly = depth;
-            renderTargetFormat[0] = format;
-        }
-        internal void ConfigureTarget(RTHandle colorAttachment, RTHandle depthAttachment, GraphicsFormat format, int width = -1, int height = -1, int sampleCount = -1, bool depth = false)
-        {
-            ConfigureTarget(colorAttachment, format, width, height, sampleCount, depth);
-            m_DepthAttachment = depthAttachment;
-
-        }
         /// <summary>
         /// Configures render targets for this render pass. Call this instead of CommandBuffer.SetRenderTarget.
         /// This method should be called inside Configure.
@@ -605,7 +587,7 @@ namespace UnityEngine.Rendering.Universal
         /// Configures render targets for this render pass. Call this instead of CommandBuffer.SetRenderTarget.
         /// This method should be called inside Configure.
         /// </summary>
-        /// <param name="colorAttachment">Color attachment handle.</param>
+        /// <param name="colorAttachments">Color attachment handle.</param>
         /// <seealso cref="Configure"/>
         public void ConfigureTarget(RTHandle[] colorAttachments)
         {
@@ -681,6 +663,15 @@ namespace UnityEngine.Rendering.Universal
         public abstract void Execute(ScriptableRenderContext context, ref RenderingData renderingData);
 
         /// <summary>
+        /// TODO RENDERGRAPH
+        /// </summary>
+        /// <param name="renderingData"></param>
+        internal virtual void RecordRenderGraph(RenderGraph renderGraph, ref RenderingData renderingData)
+        {
+            Debug.LogWarning("RecordRenderGraph is not implemented, the pass " + this.ToString() + " won't be recorded in the current RenderGraph.");
+        }
+
+        /// <summary>
         /// Add a blit command to the context for execution. This changes the active render target in the ScriptableRenderer to
         /// destination.
         /// </summary>
@@ -709,8 +700,10 @@ namespace UnityEngine.Rendering.Universal
         /// <seealso cref="ScriptableRenderer"/>
         public void Blit(CommandBuffer cmd, RTHandle source, RTHandle destination, Material material = null, int passIndex = 0)
         {
-            ScriptableRenderer.SetRenderTarget(cmd, destination, k_CameraTarget, clearFlag, clearColor);
-            cmd.Blit(source.nameID, destination.nameID, material, passIndex);
+            if (material == null)
+                Blitter.BlitCameraTexture(cmd, source, destination, bilinear: source.rt.filterMode == FilterMode.Bilinear);
+            else
+                Blitter.BlitCameraTexture(cmd, source, destination, material, passIndex);
         }
 
         /// <summary>
@@ -729,6 +722,19 @@ namespace UnityEngine.Rendering.Universal
         }
 
         /// <summary>
+        /// Add a blit command to the context for execution. This applies the material to the color target.
+        /// </summary>
+        /// <param name="cmd">Command buffer to record command for execution.</param>
+        /// <param name="source">Source texture or target identifier to blit from.</param>
+        /// <param name="material">Material to use.</param>
+        /// <param name="passIndex">Shader pass to use. Default is 0.</param>
+        public void Blit(CommandBuffer cmd, ref RenderingData data, RTHandle source, Material material, int passIndex = 0)
+        {
+            var renderer = data.cameraData.renderer;
+            Blit(cmd, source, renderer.cameraColorTargetHandle, material, passIndex);
+        }
+
+        /// <summary>
         /// Creates <c>DrawingSettings</c> based on current the rendering state.
         /// </summary>
         /// <param name="shaderTagId">Shader pass tag to render.</param>
@@ -738,18 +744,7 @@ namespace UnityEngine.Rendering.Universal
         /// <seealso cref="DrawingSettings"/>
         public DrawingSettings CreateDrawingSettings(ShaderTagId shaderTagId, ref RenderingData renderingData, SortingCriteria sortingCriteria)
         {
-            Camera camera = renderingData.cameraData.camera;
-            SortingSettings sortingSettings = new SortingSettings(camera) { criteria = sortingCriteria };
-            DrawingSettings settings = new DrawingSettings(shaderTagId, sortingSettings)
-            {
-                perObjectData = renderingData.perObjectData,
-                mainLightIndex = renderingData.lightData.mainLightIndex,
-                enableDynamicBatching = renderingData.supportsDynamicBatching,
-
-                // Disable instancing for preview cameras. This is consistent with the built-in forward renderer. Also fixes case 1127324.
-                enableInstancing = camera.cameraType == CameraType.Preview ? false : true,
-            };
-            return settings;
+            return RenderingUtils.CreateDrawingSettings(shaderTagId, ref renderingData, sortingCriteria);
         }
 
         /// <summary>
@@ -763,26 +758,57 @@ namespace UnityEngine.Rendering.Universal
         public DrawingSettings CreateDrawingSettings(List<ShaderTagId> shaderTagIdList,
             ref RenderingData renderingData, SortingCriteria sortingCriteria)
         {
-            if (shaderTagIdList == null || shaderTagIdList.Count == 0)
-            {
-                Debug.LogWarning("ShaderTagId list is invalid. DrawingSettings is created with default pipeline ShaderTagId");
-                return CreateDrawingSettings(new ShaderTagId("UniversalPipeline"), ref renderingData, sortingCriteria);
-            }
-
-            DrawingSettings settings = CreateDrawingSettings(shaderTagIdList[0], ref renderingData, sortingCriteria);
-            for (int i = 1; i < shaderTagIdList.Count; ++i)
-                settings.SetShaderPassName(i, shaderTagIdList[i]);
-            return settings;
+            return RenderingUtils.CreateDrawingSettings(shaderTagIdList, ref renderingData, sortingCriteria);
         }
 
+        /// <summary>
+        /// Compares two instances of <c>ScriptableRenderPass</c> by their <c>RenderPassEvent</c> and returns if <paramref name="lhs"/> is executed before <paramref name="rhs"/>.
+        /// </summary>
+        /// <param name="lhs"></param>
+        /// <param name="rhs"></param>
+        /// <returns></returns>
         public static bool operator <(ScriptableRenderPass lhs, ScriptableRenderPass rhs)
         {
             return lhs.renderPassEvent < rhs.renderPassEvent;
         }
 
+        /// <summary>
+        /// Compares two instances of <c>ScriptableRenderPass</c> by their <c>RenderPassEvent</c> and returns if <paramref name="lhs"/> is executed after <paramref name="rhs"/>.
+        /// </summary>
+        /// <param name="lhs"></param>
+        /// <param name="rhs"></param>
+        /// <returns></returns>
         public static bool operator >(ScriptableRenderPass lhs, ScriptableRenderPass rhs)
         {
             return lhs.renderPassEvent > rhs.renderPassEvent;
+        }
+
+        static internal int GetRenderPassEventRange(RenderPassEvent renderPassEvent)
+        {
+            int numEvents = RenderPassEventsEnumValues.values.Length;
+            int currentIndex = 0;
+
+            // find the index of the renderPassEvent in the values array
+            for(int i = 0; i < numEvents; ++i)
+            {
+                if (RenderPassEventsEnumValues.values[currentIndex] == (int)renderPassEvent)
+                    break;
+
+                currentIndex++;
+            }
+
+            if (currentIndex >= numEvents)
+            {
+                Debug.LogError("GetRenderPassEventRange: invalid renderPassEvent value cannot be found in the RenderPassEvent enumeration");
+                return 0;
+            }
+
+            if (currentIndex + 1 >= numEvents)
+                return 50; // if this was the last event in the enum, then add 50 as the range
+
+            int nextValue = RenderPassEventsEnumValues.values[currentIndex + 1];
+
+            return nextValue - (int) renderPassEvent;
         }
     }
 }

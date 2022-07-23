@@ -35,6 +35,7 @@ CBUFFER_END
 // Otherwise you might break CPU-side as property constant-buffer offsets change per variant.
 // NOTE: Dots instancing is orthogonal to the constant buffer above.
 #ifdef UNITY_DOTS_INSTANCING_ENABLED
+
 UNITY_DOTS_INSTANCING_START(MaterialPropertyMetadata)
     UNITY_DOTS_INSTANCED_PROP(float4, _BaseColor)
     UNITY_DOTS_INSTANCED_PROP(float4, _SpecColor)
@@ -114,13 +115,8 @@ half4 SampleMetallicSpecGloss(float2 uv, half albedoAlpha)
 half SampleOcclusion(float2 uv)
 {
     #ifdef _OCCLUSIONMAP
-        // TODO: Controls things like these by exposing SHADER_QUALITY levels (low, medium, high)
-        #if defined(SHADER_API_GLES)
-            return SAMPLE_TEXTURE2D(_OcclusionMap, sampler_OcclusionMap, uv).g;
-        #else
-            half occ = SAMPLE_TEXTURE2D(_OcclusionMap, sampler_OcclusionMap, uv).g;
-            return LerpWhiteTo(occ, _OcclusionStrength);
-        #endif
+        half occ = SAMPLE_TEXTURE2D(_OcclusionMap, sampler_OcclusionMap, uv).g;
+        return LerpWhiteTo(occ, _OcclusionStrength);
     #else
         return half(1.0);
     #endif

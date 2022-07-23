@@ -29,12 +29,12 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
-
         static Mesh s_FullscreenMesh = null;
 
         /// <summary>
         /// Returns a mesh that you can use with <see cref="CommandBuffer.DrawMesh(Mesh, Matrix4x4, Material)"/> to render full-screen effects.
         /// </summary>
+        [Obsolete("Use Blitter.BlitCameraTexture instead of CommandBuffer.DrawMesh(fullscreenMesh, ...)")]
         public static Mesh fullscreenMesh
         {
             get
@@ -140,98 +140,76 @@ namespace UnityEngine.Rendering.Universal
             }
         }
 
-#if ENABLE_VR && ENABLE_XR_MODULE
-        internal static readonly int UNITY_STEREO_MATRIX_V = Shader.PropertyToID("unity_StereoMatrixV");
-        internal static readonly int UNITY_STEREO_MATRIX_IV = Shader.PropertyToID("unity_StereoMatrixInvV");
-        internal static readonly int UNITY_STEREO_MATRIX_P = Shader.PropertyToID("unity_StereoMatrixP");
-        internal static readonly int UNITY_STEREO_MATRIX_IP = Shader.PropertyToID("unity_StereoMatrixInvP");
-        internal static readonly int UNITY_STEREO_MATRIX_VP = Shader.PropertyToID("unity_StereoMatrixVP");
-        internal static readonly int UNITY_STEREO_MATRIX_IVP = Shader.PropertyToID("unity_StereoMatrixInvVP");
-        internal static readonly int UNITY_STEREO_CAMERA_PROJECTION = Shader.PropertyToID("unity_StereoCameraProjection");
-        internal static readonly int UNITY_STEREO_CAMERA_INV_PROJECTION = Shader.PropertyToID("unity_StereoCameraInvProjection");
-        internal static readonly int UNITY_STEREO_VECTOR_CAMPOS = Shader.PropertyToID("unity_StereoWorldSpaceCameraPos");
-
-        // Hold the stereo matrices in this class to avoid allocating arrays every frame
-        internal class StereoConstants
+        internal static void Blit(CommandBuffer cmd,
+            RTHandle source,
+            Rect viewport,
+            RTHandle destination,
+            RenderBufferLoadAction loadAction,
+            RenderBufferStoreAction storeAction,
+            ClearFlag clearFlag,
+            Color clearColor,
+            Material material,
+            int passIndex = 0)
         {
-            public Matrix4x4[] viewProjMatrix = new Matrix4x4[2];
-            public Matrix4x4[] invViewMatrix = new Matrix4x4[2];
-            public Matrix4x4[] invProjMatrix = new Matrix4x4[2];
-            public Matrix4x4[] invViewProjMatrix = new Matrix4x4[2];
-            public Matrix4x4[] invCameraProjMatrix = new Matrix4x4[2];
-            public Vector4[] worldSpaceCameraPos = new Vector4[2];
-        };
-
-        static readonly StereoConstants stereoConstants = new StereoConstants();
-
-        /// <summary>
-        /// Helper function to set all view and projection related matrices
-        /// Should be called before draw call and after cmd.SetRenderTarget
-        /// Internal usage only, function name and signature may be subject to change
-        /// </summary>
-        /// <param name="cmd">CommandBuffer to submit data to GPU.</param>
-        /// <param name="viewMatrix">View matrix to be set. Array size is 2.</param>
-        /// <param name="projectionMatrix">Projection matrix to be set.Array size is 2.</param>
-        /// <param name="cameraProjectionMatrix">Camera projection matrix to be set.Array size is 2. Does not include platform specific transformations such as depth-reverse, depth range in post-projective space and y-flip. </param>
-        /// <param name="setInverseMatrices">Set this to true if you also need to set inverse camera matrices.</param>
-        /// <returns>Void</c></returns>
-        internal static void SetStereoViewAndProjectionMatrices(CommandBuffer cmd, Matrix4x4[] viewMatrix, Matrix4x4[] projMatrix, Matrix4x4[] cameraProjMatrix, bool setInverseMatrices)
-        {
-            for (int i = 0; i < 2; i++)
-            {
-                stereoConstants.viewProjMatrix[i] = projMatrix[i] * viewMatrix[i];
-                stereoConstants.invViewMatrix[i] = Matrix4x4.Inverse(viewMatrix[i]);
-                stereoConstants.invProjMatrix[i] = Matrix4x4.Inverse(projMatrix[i]);
-                stereoConstants.invViewProjMatrix[i] = Matrix4x4.Inverse(stereoConstants.viewProjMatrix[i]);
-                stereoConstants.invCameraProjMatrix[i] = Matrix4x4.Inverse(cameraProjMatrix[i]);
-                stereoConstants.worldSpaceCameraPos[i] = stereoConstants.invViewMatrix[i].GetColumn(3);
-            }
-
-            cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_V, viewMatrix);
-            cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_P, projMatrix);
-            cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_VP, stereoConstants.viewProjMatrix);
-
-            cmd.SetGlobalMatrixArray(UNITY_STEREO_CAMERA_PROJECTION, cameraProjMatrix);
-
-            if (setInverseMatrices)
-            {
-                cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_IV, stereoConstants.invViewMatrix);
-                cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_IP, stereoConstants.invProjMatrix);
-                cmd.SetGlobalMatrixArray(UNITY_STEREO_MATRIX_IVP, stereoConstants.invViewProjMatrix);
-
-                cmd.SetGlobalMatrixArray(UNITY_STEREO_CAMERA_INV_PROJECTION, stereoConstants.invCameraProjMatrix);
-            }
-            cmd.SetGlobalVectorArray(UNITY_STEREO_VECTOR_CAMPOS, stereoConstants.worldSpaceCameraPos);
+            Vector2 viewportScale = source.useScaling ? new Vector2(source.rtHandleProperties.rtHandleScale.x, source.rtHandleProperties.rtHandleScale.y) : Vector2.one;
+            CoreUtils.SetRenderTarget(cmd, destination, loadAction, storeAction, ClearFlag.None, Color.clear);
+            cmd.SetViewport(viewport);
+            Blitter.BlitTexture(cmd, source, viewportScale, material, passIndex);
         }
-
-#endif
 
         internal static void Blit(CommandBuffer cmd,
             RTHandle source,
-            RTHandle destination,
+            Rect viewport,
+            RTHandle destinationColor,
+            RenderBufferLoadAction colorLoadAction,
+            RenderBufferStoreAction colorStoreAction,
+            RTHandle destinationDepthStencil,
+            RenderBufferLoadAction depthStencilLoadAction,
+            RenderBufferStoreAction depthStencilStoreAction,
+            ClearFlag clearFlag,
+            Color clearColor,
             Material material,
-            int passIndex = 0,
-            bool useDrawProcedural = false,
-            RenderBufferLoadAction colorLoadAction = RenderBufferLoadAction.Load,
-            RenderBufferStoreAction colorStoreAction = RenderBufferStoreAction.Store,
-            RenderBufferLoadAction depthLoadAction = RenderBufferLoadAction.Load,
-            RenderBufferStoreAction depthStoreAction = RenderBufferStoreAction.Store)
+            int passIndex = 0)
         {
-            cmd.SetGlobalTexture(ShaderPropertyId.sourceTex, source);
-            if (useDrawProcedural)
-            {
-                Vector4 scaleBias = new Vector4(1, 1, 0, 0);
-                Vector4 scaleBiasRt = new Vector4(1, 1, 0, 0);
-                cmd.SetGlobalVector(ShaderPropertyId.scaleBias, scaleBias);
-                cmd.SetGlobalVector(ShaderPropertyId.scaleBiasRt, scaleBiasRt);
-                CoreUtils.SetRenderTarget(cmd, destination, colorLoadAction, colorStoreAction, ClearFlag.None, Color.clear);
-                cmd.DrawProcedural(Matrix4x4.identity, material, passIndex, MeshTopology.Quads, 4, 1, null);
-            }
+            Vector2 viewportScale = source.useScaling ? new Vector2(source.rtHandleProperties.rtHandleScale.x, source.rtHandleProperties.rtHandleScale.y) : Vector2.one;
+            CoreUtils.SetRenderTarget(cmd,
+                destinationColor, colorLoadAction, colorStoreAction,
+                destinationDepthStencil, depthStencilLoadAction, depthStencilStoreAction,
+                clearFlag, clearColor); // implicit depth=1.0f stencil=0x0
+            cmd.SetViewport(viewport);
+            Blitter.BlitTexture(cmd, source, viewportScale, material, passIndex);
+        }
+
+        internal static void FinalBlit(
+            CommandBuffer cmd,
+            ref CameraData cameraData,
+            RTHandle source,
+            RTHandle destination,
+            RenderBufferLoadAction loadAction,
+            RenderBufferStoreAction storeAction,
+            Material material, int passIndex)
+        {
+            bool isRenderToBackBufferTarget = !cameraData.isSceneViewCamera;
+#if ENABLE_VR && ENABLE_XR_MODULE
+                if (cameraData.xr.enabled)
+                    isRenderToBackBufferTarget = new RenderTargetIdentifier(destination.nameID, 0, CubemapFace.Unknown, -1) == new RenderTargetIdentifier(cameraData.xr.renderTarget, 0, CubemapFace.Unknown, -1);
+#endif
+
+            Vector2 viewportScale = source.useScaling ? new Vector2(source.rtHandleProperties.rtHandleScale.x, source.rtHandleProperties.rtHandleScale.y) : Vector2.one;
+
+            // We y-flip if
+            // 1) we are blitting from render texture to back buffer(UV starts at bottom) and
+            // 2) renderTexture starts UV at top
+            bool yflip = isRenderToBackBufferTarget && cameraData.targetTexture == null && SystemInfo.graphicsUVStartsAtTop;
+            Vector4 scaleBias = yflip ? new Vector4(viewportScale.x, -viewportScale.y, 0, viewportScale.y) : new Vector4(viewportScale.x, viewportScale.y, 0, 0);
+            CoreUtils.SetRenderTarget(cmd, destination, loadAction, storeAction, ClearFlag.None, Color.clear);
+            if (isRenderToBackBufferTarget)
+                cmd.SetViewport(cameraData.pixelRect);
+
+            if (source.rt == null)
+                Blitter.BlitTexture(cmd, source.nameID, scaleBias, material, passIndex);  // Obsolete usage of RTHandle aliasing a RenderTargetIdentifier
             else
-            {
-                CoreUtils.SetRenderTarget(cmd, destination, colorLoadAction, colorStoreAction, ClearFlag.None, Color.clear);
-                cmd.Blit(source.nameID, BuiltinRenderTextureType.CurrentActive, material, passIndex);
-            }
+                Blitter.BlitTexture(cmd, source, scaleBias, material, passIndex);
         }
 
         // This is used to render materials that contain built-in shader passes not compatible with URP.
@@ -483,10 +461,11 @@ namespace UnityEngine.Rendering.Universal
             return true;
         }
 
-        // TODO: remove useRenderPassEnabled parameter when depth resolve support is added to RenderPass (URP-1009)
-        internal static bool MultisampleDepthResolveSupported(bool useRenderPassEnabled)
+        internal static bool MultisampleDepthResolveSupported()
         {
-            if (useRenderPassEnabled)
+            // Temporarily disabling depth resolve a driver bug on OSX when using some AMD graphics cards. Temporarily disabling depth resolve on that platform
+            // TODO: re-enable once the issue is investigated/fixed
+            if (Application.platform == RuntimePlatform.OSXEditor || Application.platform == RuntimePlatform.OSXPlayer)
                 return false;
 
             // Should we also check if the format has stencil and check stencil resolve capability only in that case?
@@ -639,6 +618,53 @@ namespace UnityEngine.Rendering.Universal
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Creates <c>DrawingSettings</c> based on current the rendering state.
+        /// </summary>
+        /// <param name="shaderTagId">Shader pass tag to render.</param>
+        /// <param name="renderingData">Current rendering state.</param>
+        /// <param name="sortingCriteria">Criteria to sort objects being rendered.</param>
+        /// <returns></returns>
+        /// <seealso cref="DrawingSettings"/>
+        static public DrawingSettings CreateDrawingSettings(ShaderTagId shaderTagId, ref RenderingData renderingData, SortingCriteria sortingCriteria)
+        {
+            Camera camera = renderingData.cameraData.camera;
+            SortingSettings sortingSettings = new SortingSettings(camera) { criteria = sortingCriteria };
+            DrawingSettings settings = new DrawingSettings(shaderTagId, sortingSettings)
+            {
+                perObjectData = renderingData.perObjectData,
+                mainLightIndex = renderingData.lightData.mainLightIndex,
+                enableDynamicBatching = renderingData.supportsDynamicBatching,
+
+                // Disable instancing for preview cameras. This is consistent with the built-in forward renderer. Also fixes case 1127324.
+                enableInstancing = camera.cameraType == CameraType.Preview ? false : true,
+            };
+            return settings;
+        }
+
+        /// <summary>
+        /// Creates <c>DrawingSettings</c> based on current rendering state.
+        /// </summary>
+        /// /// <param name="shaderTagIdList">List of shader pass tag to render.</param>
+        /// <param name="renderingData">Current rendering state.</param>
+        /// <param name="sortingCriteria">Criteria to sort objects being rendered.</param>
+        /// <returns></returns>
+        /// <seealso cref="DrawingSettings"/>
+        static public DrawingSettings CreateDrawingSettings(List<ShaderTagId> shaderTagIdList,
+            ref RenderingData renderingData, SortingCriteria sortingCriteria)
+        {
+            if (shaderTagIdList == null || shaderTagIdList.Count == 0)
+            {
+                Debug.LogWarning("ShaderTagId list is invalid. DrawingSettings is created with default pipeline ShaderTagId");
+                return CreateDrawingSettings(new ShaderTagId("UniversalPipeline"), ref renderingData, sortingCriteria);
+            }
+
+            DrawingSettings settings = CreateDrawingSettings(shaderTagIdList[0], ref renderingData, sortingCriteria);
+            for (int i = 1; i < shaderTagIdList.Count; ++i)
+                settings.SetShaderPassName(i, shaderTagIdList[i]);
+            return settings;
         }
     }
 }

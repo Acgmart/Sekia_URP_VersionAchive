@@ -97,6 +97,10 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         List<string> m_SubTargetNames;
         int activeSubTargetIndex => m_SubTargets.IndexOf(m_ActiveSubTarget);
 
+        // Subtarget Data
+        [SerializeField]
+        List<JsonData<JsonObject>> m_Datas = new List<JsonData<JsonObject>>();
+
         // View
         PopupField<string> m_SubTargetField;
         TextField m_CustomGUIField;
@@ -136,6 +140,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         bool m_ReceiveShadows = true;
 
         [SerializeField]
+        bool m_SupportsLODCrossFade = false;
+
+        [SerializeField]
         string m_CustomEditorGUI;
 
         [SerializeField]
@@ -153,6 +160,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             m_SubTargets = TargetUtils.GetSubTargets(this);
             m_SubTargetNames = m_SubTargets.Select(x => x.displayName).ToList();
             TargetUtils.ProcessSubTargetList(ref m_ActiveSubTarget, ref m_SubTargets);
+            ProcessSubTargetDatas(m_ActiveSubTarget.value);
         }
 
         public string renderType
@@ -240,6 +248,12 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             set => m_ReceiveShadows = value;
         }
 
+        public bool supportsLodCrossFade
+        {
+            get => m_SupportsLODCrossFade;
+            set => m_SupportsLODCrossFade = value;
+        }
+
         public string customEditorGUI
         {
             get => m_CustomEditorGUI;
@@ -285,6 +299,9 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             SubTargetFilterAttribute subTargetFilter = NodeClassCache.GetAttributeOnNodeType<SubTargetFilterAttribute>(nodeType);
             bool worksWithThisSubTarget = subTargetFilter == null || subTargetFilter.subTargetTypes.Contains(activeSubTarget.GetType());
 
+            if (activeSubTarget.IsActive())
+                worksWithThisSubTarget &= activeSubTarget.IsNodeAllowedBySubTarget(nodeType);
+
             return worksWithThisSrp && worksWithThisSubTarget && base.IsNodeAllowedByTarget(nodeType);
         }
 
@@ -300,6 +317,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             // Setup the active SubTarget
             TargetUtils.ProcessSubTargetList(ref m_ActiveSubTarget, ref m_SubTargets);
             m_ActiveSubTarget.value.target = this;
+            ProcessSubTargetDatas(m_ActiveSubTarget.value);
             m_ActiveSubTarget.value.Setup(ref context);
         }
 
@@ -330,10 +348,13 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         public override void GetActiveBlocks(ref TargetActiveBlockContext context)
         {
             // Core blocks
-            context.AddBlock(BlockFields.VertexDescription.Position);
-            context.AddBlock(BlockFields.VertexDescription.Normal);
-            context.AddBlock(BlockFields.VertexDescription.Tangent);
-            context.AddBlock(BlockFields.SurfaceDescription.BaseColor);
+            if (!(m_ActiveSubTarget.value is UnityEditor.Rendering.Fullscreen.ShaderGraph.FullscreenSubTarget<UniversalTarget>))
+            {
+                context.AddBlock(BlockFields.VertexDescription.Position);
+                context.AddBlock(BlockFields.VertexDescription.Normal);
+                context.AddBlock(BlockFields.VertexDescription.Tangent);
+                context.AddBlock(BlockFields.SurfaceDescription.BaseColor);
+            }
 
             // SubTarget blocks
             m_ActiveSubTarget.value.GetActiveBlocks(ref context);
@@ -371,6 +392,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
 
                 registerUndo("Change Material");
                 m_ActiveSubTarget = m_SubTargets[m_SubTargetField.index];
+                ProcessSubTargetDatas(m_ActiveSubTarget.value);
                 onChange();
             });
 
@@ -519,6 +541,16 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                     receiveShadows = evt.newValue;
                     onChange();
                 });
+
+            context.AddProperty("Supports LOD Cross Fade", new Toggle() { value = supportsLodCrossFade }, (evt) =>
+            {
+                if (Equals(supportsLodCrossFade, evt.newValue))
+                    return;
+
+                registerUndo("Change Supports LOD Cross Fade");
+                supportsLodCrossFade = evt.newValue;
+                onChange();
+            });
         }
 
         public bool TrySetActiveSubTarget(Type subTargetType)
@@ -531,11 +563,73 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 if (subTarget.GetType().Equals(subTargetType))
                 {
                     m_ActiveSubTarget = subTarget;
+                    ProcessSubTargetDatas(m_ActiveSubTarget);
                     return true;
                 }
             }
 
             return false;
+        }
+
+        void ProcessSubTargetDatas(SubTarget subTarget)
+        {
+            var typeCollection = TypeCache.GetTypesDerivedFrom<JsonObject>();
+            foreach (var type in typeCollection)
+            {
+                if (type.IsGenericType)
+                    continue;
+
+                // Data requirement interfaces need generic type arguments
+                // Therefore we need to use reflections to call the method
+                var methodInfo = typeof(UniversalTarget).GetMethod(nameof(SetDataOnSubTarget));
+                var genericMethodInfo = methodInfo.MakeGenericMethod(type);
+                genericMethodInfo.Invoke(this, new object[] { subTarget });
+            }
+        }
+
+        void ClearUnusedData()
+        {
+            for (int i = 0; i < m_Datas.Count; i++)
+            {
+                var data = m_Datas[i];
+                var type = data.value.GetType();
+
+                // Data requirement interfaces need generic type arguments
+                // Therefore we need to use reflections to call the method
+                var methodInfo = typeof(UniversalTarget).GetMethod(nameof(ValidateDataForSubTarget));
+                var genericMethodInfo = methodInfo.MakeGenericMethod(type);
+                genericMethodInfo.Invoke(this, new object[] { m_ActiveSubTarget.value, data.value });
+            }
+        }
+
+        public void SetDataOnSubTarget<T>(SubTarget subTarget) where T : JsonObject
+        {
+            if (!(subTarget is IRequiresData<T> requiresData))
+                return;
+
+            // Ensure data object exists in list
+            var data = m_Datas.SelectValue().FirstOrDefault(x => x.GetType().Equals(typeof(T))) as T;
+            if (data == null)
+            {
+                data = Activator.CreateInstance(typeof(T)) as T;
+                m_Datas.Add(data);
+            }
+
+            // Apply data object to SubTarget
+            requiresData.data = data;
+        }
+
+        public void ValidateDataForSubTarget<T>(SubTarget subTarget, T data) where T : JsonObject
+        {
+            if (!(subTarget is IRequiresData<T> requiresData))
+            {
+                m_Datas.Remove(data);
+            }
+        }
+
+        public override void OnBeforeSerialize()
+        {
+            ClearUnusedData();
         }
 
         public bool TryUpgradeFromMasterNode(IMasterNode1 masterNode, out Dictionary<BlockFieldDescriptor, int> blockMap)
@@ -625,11 +719,17 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             if (m_ActiveSubTarget.value is UniversalLitSubTarget)
                 return true;
 
+            if (m_ActiveSubTarget.value is UniversalSpriteLitSubTarget)
+                return true;
+
+            if (m_ActiveSubTarget.value is UniversalSpriteUnlitSubTarget)
+                return true;
+
+            if (m_ActiveSubTarget.value is UniversalSpriteCustomLitSubTarget)
+                return true;
+
             //It excludes:
             // - UniversalDecalSubTarget
-            // - UniversalSpriteLitSubTarget
-            // - UniversalSpriteUnlitSubTarget
-            // - UniversalSpriteCustomLitSubTarget
             return false;
         }
 
@@ -694,12 +794,41 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
     #region Passes
     static class CorePasses
     {
+        /// <summary>
+        ///  Automatically enables Alpha-To-Coverage in the provided opaque pass targets using alpha clipping
+        /// </summary>
+        /// <param name="pass">The pass to modify</param>
+        /// <param name="target">The target to query</param>
+        internal static void AddAlphaToMaskControlToPass(ref PassDescriptor pass, UniversalTarget target)
+        {
+            if (target.allowMaterialOverride)
+            {
+                // When material overrides are allowed, we have to rely on the _AlphaToMask material property since we can't be
+                // sure of the surface type and alpha clip state based on the target alone.
+                pass.renderStates.Add(RenderState.AlphaToMask("[_AlphaToMask]"));
+            }
+            else if (target.alphaClip && (target.surfaceType == SurfaceType.Opaque))
+            {
+                pass.renderStates.Add(RenderState.AlphaToMask("On"));
+            }
+        }
+
         internal static void AddAlphaClipControlToPass(ref PassDescriptor pass, UniversalTarget target)
         {
             if (target.allowMaterialOverride)
                 pass.keywords.Add(CoreKeywordDescriptors.AlphaTestOn);
             else if (target.alphaClip)
                 pass.defines.Add(CoreKeywordDescriptors.AlphaTestOn, 1);
+        }
+
+        internal static void AddLODCrossFadeControlToPass(ref PassDescriptor pass, UniversalTarget target)
+        {
+            if (target.supportsLodCrossFade)
+            {
+                pass.includes.Add(CoreIncludes.LODCrossFade);
+                pass.keywords.Add(CoreKeywordDescriptors.LODFadeCrossFade);
+                pass.defines.Add(CoreKeywordDescriptors.UseUnityCrossFade, 1);
+            }
         }
 
         internal static void AddTargetSurfaceControlsToPass(ref PassDescriptor pass, UniversalTarget target, bool blendModePreserveSpecular = false)
@@ -765,6 +894,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             };
 
             AddAlphaClipControlToPass(ref result, target);
+            AddLODCrossFadeControlToPass(ref result, target);
 
             return result;
         }
@@ -805,6 +935,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             };
 
             AddAlphaClipControlToPass(ref result, target);
+            AddLODCrossFadeControlToPass(ref result, target);
 
             return result;
         }
@@ -837,7 +968,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
                 renderStates = CoreRenderStates.DepthNormalsOnly(target),
                 pragmas = CorePragmas.Instanced,
                 defines = new DefineCollection(),
-                keywords = new KeywordCollection(),
+                keywords = new KeywordCollection() { CoreKeywordDescriptors.GBufferNormalsOct },
                 includes = CoreIncludes.DepthNormalsOnly,
 
                 // Custom Interpolator Support
@@ -845,6 +976,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             };
 
             AddAlphaClipControlToPass(ref result, target);
+            AddLODCrossFadeControlToPass(ref result, target);
 
             return result;
         }
@@ -884,6 +1016,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             };
 
             AddAlphaClipControlToPass(ref result, target);
+            AddLODCrossFadeControlToPass(ref result, target);
 
             return result;
         }
@@ -1304,10 +1437,14 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
     #region Pragmas
     static class CorePragmas
     {
+        // SM20 SubShaders need to use SM35 for DOTS_INSTANCING_ON variants
+        private static PragmaDescriptor DOTSInstancingSM35 => Pragma.TargetForKeyword(ShaderModel.Target35, "DOTS_INSTANCING_ON");
+
         public static readonly PragmaCollection Default = new PragmaCollection
         {
             { Pragma.Target(ShaderModel.Target20) },
             { Pragma.OnlyRenderers(new[] { Platform.GLES, Platform.GLES3, Platform.GLCore, Platform.D3D11 }) },
+            { Pragma.DOTSInstancing }, { DOTSInstancingSM35 },
             { Pragma.Vertex("vert") },
             { Pragma.Fragment("frag") },
         };
@@ -1317,6 +1454,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             { Pragma.Target(ShaderModel.Target20) },
             { Pragma.OnlyRenderers(new[] { Platform.GLES, Platform.GLES3, Platform.GLCore, Platform.D3D11 }) },
             { Pragma.MultiCompileInstancing },
+            { Pragma.DOTSInstancing }, { DOTSInstancingSM35 },
             { Pragma.Vertex("vert") },
             { Pragma.Fragment("frag") },
         };
@@ -1327,6 +1465,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             { Pragma.OnlyRenderers(new[] { Platform.GLES, Platform.GLES3, Platform.GLCore, Platform.D3D11 }) },
             { Pragma.MultiCompileInstancing },
             { Pragma.MultiCompileFog },
+            { Pragma.DOTSInstancing }, { DOTSInstancingSM35 },
             { Pragma.InstancingOptions(InstancingOptions.RenderingLayer) },
             { Pragma.Vertex("vert") },
             { Pragma.Fragment("frag") },
@@ -1340,15 +1479,16 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             { Pragma.Fragment("frag") },
         };
 
-        public static readonly PragmaCollection DOTSDefault = new PragmaCollection
+        public static readonly PragmaCollection DefaultSM45 = new PragmaCollection
         {
             { Pragma.Target(ShaderModel.Target45) },
             { Pragma.ExcludeRenderers(new[] { Platform.GLES, Platform.GLES3, Platform.GLCore }) },
+            { Pragma.DOTSInstancing },
             { Pragma.Vertex("vert") },
             { Pragma.Fragment("frag") },
         };
 
-        public static readonly PragmaCollection DOTSInstanced = new PragmaCollection
+        public static readonly PragmaCollection InstancedSM45 = new PragmaCollection
         {
             { Pragma.Target(ShaderModel.Target45) },
             { Pragma.ExcludeRenderers(new[] { Platform.GLES, Platform.GLES3, Platform.GLCore }) },
@@ -1358,7 +1498,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             { Pragma.Fragment("frag") },
         };
 
-        public static readonly PragmaCollection DOTSForward = new PragmaCollection
+        public static readonly PragmaCollection ForwardSM45 = new PragmaCollection
         {
             { Pragma.Target(ShaderModel.Target45) },
             { Pragma.ExcludeRenderers(new[] { Platform.GLES, Platform.GLES3, Platform.GLCore }) },
@@ -1370,7 +1510,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             { Pragma.Fragment("frag") },
         };
 
-        public static readonly PragmaCollection DOTSGBuffer = new PragmaCollection
+        public static readonly PragmaCollection GBufferSM45 = new PragmaCollection
         {
             { Pragma.Target(ShaderModel.Target45) },
             { Pragma.ExcludeRenderers(new[] { Platform.GLES, Platform.GLES3, Platform.GLCore }) },
@@ -1390,6 +1530,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         const string kColor = "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl";
         const string kTexture = "Packages/com.unity.render-pipelines.core/ShaderLibrary/Texture.hlsl";
         const string kCore = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl";
+        const string kInput = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Input.hlsl";
         const string kLighting = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl";
         const string kGraphFunctions = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/ShaderGraphFunctions.hlsl";
         const string kVaryings = "Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/Varyings.hlsl";
@@ -1400,6 +1541,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         const string kTextureStack = "Packages/com.unity.render-pipelines.core/ShaderLibrary/TextureStack.hlsl";
         const string kDBuffer = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DBuffer.hlsl";
         const string kSelectionPickingPass = "Packages/com.unity.render-pipelines.universal/Editor/ShaderGraph/Includes/SelectionPickingPass.hlsl";
+        const string kLODCrossFade = "Packages/com.unity.render-pipelines.universal/ShaderLibrary/LODCrossFade.hlsl";
 
         public static readonly IncludeCollection CorePregraph = new IncludeCollection
         {
@@ -1407,6 +1549,7 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             { kTexture, IncludeLocation.Pregraph },
             { kCore, IncludeLocation.Pregraph },
             { kLighting, IncludeLocation.Pregraph },
+            { kInput, IncludeLocation.Pregraph },
             { kTextureStack, IncludeLocation.Pregraph },        // TODO: put this on a conditional
         };
 
@@ -1479,6 +1622,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             // Post-graph
             { CorePostgraph },
             { kSelectionPickingPass, IncludeLocation.Postgraph },
+        };
+
+        public static readonly IncludeCollection LODCrossFade = new IncludeCollection
+        {
+            { kLODCrossFade, IncludeLocation.Pregraph }
         };
     }
     #endregion
@@ -1705,6 +1853,16 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             stages = KeywordShaderStage.Fragment,
         };
 
+        public static readonly KeywordDescriptor WriteRenderingLayers = new KeywordDescriptor()
+        {
+            displayName = "Write Rendering Layers",
+            referenceName = "_WRITE_RENDERING_LAYERS",
+            type = KeywordType.Boolean,
+            definition = KeywordDefinition.MultiCompile,
+            scope = KeywordScope.Global,
+            stages = KeywordShaderStage.Fragment,
+        };
+
         public static readonly KeywordDescriptor RenderPassEnabled = new KeywordDescriptor()
         {
             displayName = "Render Pass Enabled",
@@ -1802,6 +1960,16 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             stages = KeywordShaderStage.Fragment,
         };
 
+        public static readonly KeywordDescriptor FoveatedRendering = new KeywordDescriptor()
+        {
+            displayName = "Foveated Rendering Non Uniform Raster",
+            referenceName = "_FOVEATED_RENDERING_NON_UNIFORM_RASTER",
+            type = KeywordType.Boolean,
+            definition = KeywordDefinition.MultiCompile,
+            scope = KeywordScope.Global,
+            stages = KeywordShaderStage.Fragment,
+        };
+
         public static readonly KeywordDescriptor SceneSelectionPass = new KeywordDescriptor()
         {
             displayName = "Scene Selection Pass",
@@ -1834,10 +2002,10 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             stages = KeywordShaderStage.Fragment,
         };
 
-        public static readonly KeywordDescriptor ClusteredRendering = new KeywordDescriptor()
+        public static readonly KeywordDescriptor ForwardPlus = new KeywordDescriptor()
         {
-            displayName = "Clustered Rendering",
-            referenceName = "_CLUSTERED_RENDERING",
+            displayName = "Forward+",
+            referenceName = "_FORWARD_PLUS",
             type = KeywordType.Boolean,
             definition = KeywordDefinition.MultiCompile,
             scope = KeywordScope.Global,
@@ -1851,6 +2019,36 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
             definition = KeywordDefinition.ShaderFeature,
             scope = KeywordScope.Global,
         };
+
+        public static readonly KeywordDescriptor LODFadeCrossFade = new KeywordDescriptor()
+        {
+            displayName = ShaderKeywordStrings.LOD_FADE_CROSSFADE,
+            referenceName = ShaderKeywordStrings.LOD_FADE_CROSSFADE,
+            type = KeywordType.Boolean,
+            definition = KeywordDefinition.MultiCompile,
+            scope = KeywordScope.Global,
+            stages = KeywordShaderStage.Fragment,
+        };
+
+        public static readonly KeywordDescriptor UseUnityCrossFade = new KeywordDescriptor()
+        {
+            displayName = ShaderKeywordStrings.USE_UNITY_CROSSFADE,
+            referenceName = ShaderKeywordStrings.USE_UNITY_CROSSFADE,
+            type = KeywordType.Boolean,
+            definition = KeywordDefinition.MultiCompile,
+            scope = KeywordScope.Global,
+            stages = KeywordShaderStage.Fragment,
+        };
+
+        public static readonly KeywordDescriptor ScreenSpaceAmbientOcclusion = new KeywordDescriptor()
+        {
+            displayName = "Screen Space Ambient Occlusion",
+            referenceName = "_SCREEN_SPACE_OCCLUSION",
+            type = KeywordType.Boolean,
+            definition = KeywordDefinition.MultiCompile,
+            scope = KeywordScope.Global,
+            stages = KeywordShaderStage.Fragment,
+        };
     }
     #endregion
 
@@ -1860,6 +2058,11 @@ namespace UnityEditor.Rendering.Universal.ShaderGraph
         public static readonly KeywordCollection ShadowCaster = new KeywordCollection
         {
             { CoreKeywordDescriptors.CastingPunctualLightShadow },
+        };
+
+        public static readonly KeywordCollection DOTSDepthNormal = new KeywordCollection
+        {
+            { CoreKeywordDescriptors.WriteRenderingLayers },
         };
     }
     #endregion

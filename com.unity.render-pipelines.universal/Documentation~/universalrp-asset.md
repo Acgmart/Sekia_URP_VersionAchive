@@ -1,5 +1,6 @@
 # Universal Render Pipeline Asset
-To use the Universal Render Pipeline (URP), you have to [create a URP Asset and assign the asset in the Graphics settings](configuring-universalrp-for-use.md).
+
+Any Unity project that uses the Universal Render Pipeline (URP) must have a URP Asset to configure the settings. When you create a project using the URP template, Unity creates the URP Assets in the **Settings** project folder and assigns them in Project Settings. If you are migrating an existing project to URP, you need to [create a URP Asset and assign the asset in the Graphics settings](configuring-universalrp-for-use.md).
 
 The URP Asset controls several graphical features and quality settings for the Universal Render Pipeline.  It is a scriptable object that inherits from ‘RenderPipelineAsset’. When you assign the asset in the Graphics settings, Unity switches from the built-in render pipeline to the URP. You can then adjust the corresponding settings directly in the URP, instead of looking for them elsewhere.
 
@@ -67,6 +68,8 @@ These settings control the quality level of the URP. This is where you can make 
 | __HDR__          | Enable this to allow rendering in High Dynamic Range (HDR) by default for every camera in your Scene. With HDR, the brightest part of the image can be greater than 1. This gives you a wider range of light intensities, so your lighting looks more realistic. With it, you can still see details and experience less saturation even with bright light. This is useful if you want a wide range of lighting or to use [bloom](https://docs.unity3d.com/Manual/PostProcessing-Bloom.html) effects. If you’re targeting lower-end hardware, you can disable this to skip HDR calculations and get better performance. You can override this for individual cameras in the Camera Inspector. |
 | __MSAA__         | Use [Multi Sample Anti-aliasing](https://en.wikipedia.org/wiki/Multisample_anti-aliasing) by default for every Camera in your Scene while rendering. This softens edges of your geometry, so they’re not jagged or flickering. In the drop-down menu, select how many samples to use per pixel: __2x__, __4x__, or __8x__. The more samples you choose, the smoother your object edges are. If you want to skip MSAA calculations, or you don’t need them in a 2D game, select __Disabled__. You can override this for individual cameras in the Camera Inspector.<br/>**Note:** On mobile platforms that do not support the [StoreAndResolve](https://docs.unity3d.com/ScriptReference/Rendering.RenderBufferStoreAction.StoreAndResolve.html) store action, if __Opaque Texture__ is selected in the URP asset, Unity ignores the **Anti Aliasing (MSAA)** property at runtime (as if Anti Aliasing (MSAA) is set to Disabled). |
 | __Render Scale__ | This slider scales the render target resolution (not the resolution of your current device). Use this when you want to render at a smaller resolution for performance reasons or to upscale rendering to improve quality.  This only scales the game rendering. UI rendering is left at the native resolution for the device. |
+| __LOD Cross Fade__       | Use this property to enable or disable the LOD cross-fade. If you disable this option, URP removes all LOD cross-fade shader variants when you build the Unity Player, which decreases the build time. |
+| __LOD Cross Fade Dithering Type__ | When an [LOD group](https://docs.unity3d.com/Manual/class-LODGroup.html) has __Fade Mode__ set to __Cross Fade__, Unity renders the Renderer's LOD meshes with cross-fade blending between them using alpha testing. This property defines the type of LOD cross-fade.<br/>Options:<br/>__Bayer Matrix__: better performance than the Blue Noise option, but has a repetitive pattern.<br/>__Blue Noise__: uses a precomputed blue noise texture and provides a better look than the Bayer Matrix option, but has a slightly higher performance cost. |
 
 ### Lighting
 
@@ -85,6 +88,7 @@ If you disable some of these settings, the relevant [keywords](shader-stripping.
 | __Per Object Limit__  | This slider sets the limit for how many additional lights can affect each GameObject. |
 | __Cast Shadows__      | Check this box to make the additional lights cast shadows in your Scene. |
 | __Shadow Resolution__ | This controls the size of the textures that cast directional shadows for the additional lights. This is a sprite atlas that packs up to 16 shadow maps. High resolutions give sharper, more detailed shadows. If memory or rendering time is an issue, try a lower resolution. |
+| __Mixed Lighting__         | Enable [Mixed Lighting](https://docs.unity3d.com/Manual/LightMode-Mixed.html) to configure the pipeline to include mixed lighting shader variants in the build. |
 
 ### Shadows
 

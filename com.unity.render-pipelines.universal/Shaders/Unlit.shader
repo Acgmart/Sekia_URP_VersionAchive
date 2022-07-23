@@ -17,6 +17,7 @@ Shader "Universal Render Pipeline/Unlit"
         [HideInInspector] _SrcBlendAlpha("__srcA", Float) = 1.0
         [HideInInspector] _DstBlendAlpha("__dstA", Float) = 0.0
         [HideInInspector] _ZWrite("__zw", Float) = 1.0
+        [HideInInspector] _AlphaToMask("__alphaToMask", Float) = 0.0
 
         // Editmode props
         _QueueOffset("Queue offset", Float) = 0.0
@@ -40,6 +41,8 @@ Shader "Universal Render Pipeline/Unlit"
         {
             Name "Unlit"
 
+            AlphaToMask[_AlphaToMask]
+
             HLSLPROGRAM
             #pragma exclude_renderers gles gles3 glcore
             #pragma target 4.5
@@ -56,6 +59,8 @@ Shader "Universal Render Pipeline/Unlit"
             #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
             #pragma multi_compile_fragment _ _DBUFFER_MRT1 _DBUFFER_MRT2 _DBUFFER_MRT3
             #pragma multi_compile _ DEBUG_DISPLAY
+            #pragma multi_compile_fragment _ LOD_FADE_CROSSFADE
+            #pragma multi_compile_fragment _ _WRITE_RENDERING_LAYERS
 
             #pragma vertex UnlitPassVertex
             #pragma fragment UnlitPassFragment
@@ -83,6 +88,10 @@ Shader "Universal Render Pipeline/Unlit"
             // -------------------------------------
             // Material Keywords
             #pragma shader_feature_local_fragment _ALPHATEST_ON
+
+            // -------------------------------------
+            // Unity defined keywords
+            #pragma multi_compile_fragment _ LOD_FADE_CROSSFADE
 
             //--------------------------------------
             // GPU Instancing
@@ -113,8 +122,10 @@ Shader "Universal Render Pipeline/Unlit"
             #pragma shader_feature_local_fragment _ALPHATEST_ON
 
             // -------------------------------------
-            // Unity defined keywords
+            // Universal Pipeline keywords
             #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT // forward-only variant
+            #pragma multi_compile_fragment _ LOD_FADE_CROSSFADE
+            #pragma multi_compile_fragment _ _WRITE_RENDERING_LAYERS
 
             //--------------------------------------
             // GPU Instancing
@@ -161,6 +172,8 @@ Shader "Universal Render Pipeline/Unlit"
         {
             Name "Unlit"
 
+            AlphaToMask[_AlphaToMask]
+
             HLSLPROGRAM
             #pragma only_renderers gles gles3 glcore d3d11
             #pragma target 2.0
@@ -175,6 +188,9 @@ Shader "Universal Render Pipeline/Unlit"
             #pragma multi_compile_instancing
             #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
             #pragma multi_compile _ DEBUG_DISPLAY
+            #pragma multi_compile_fragment _ LOD_FADE_CROSSFADE
+            #pragma multi_compile _ DOTS_INSTANCING_ON
+            #pragma target 3.5 DOTS_INSTANCING_ON
 
             #pragma vertex UnlitPassVertex
             #pragma fragment UnlitPassFragment
@@ -203,9 +219,15 @@ Shader "Universal Render Pipeline/Unlit"
             // Material Keywords
             #pragma shader_feature_local_fragment _ALPHATEST_ON
 
+            // -------------------------------------
+            // Unity defined keywords
+            #pragma multi_compile_fragment _ LOD_FADE_CROSSFADE
+
             //--------------------------------------
             // GPU Instancing
             #pragma multi_compile_instancing
+            #pragma multi_compile _ DOTS_INSTANCING_ON
+            #pragma target 3.5 DOTS_INSTANCING_ON
 
             #include "Packages/com.unity.render-pipelines.universal/Shaders/UnlitInput.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/Shaders/DepthOnlyPass.hlsl"
@@ -233,11 +255,13 @@ Shader "Universal Render Pipeline/Unlit"
             // -------------------------------------
             // Unity defined keywords
             #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT // forward-only variant
+            #pragma multi_compile_fragment _ LOD_FADE_CROSSFADE
 
             //--------------------------------------
             // GPU Instancing
             #pragma multi_compile_instancing
             #pragma multi_compile _ DOTS_INSTANCING_ON
+            #pragma target 3.5 DOTS_INSTANCING_ON
 
             #include "Packages/com.unity.render-pipelines.universal/Shaders/UnlitInput.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/Shaders/UnlitDepthNormalsPass.hlsl"

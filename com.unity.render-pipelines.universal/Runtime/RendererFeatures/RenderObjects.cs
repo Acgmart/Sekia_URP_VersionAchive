@@ -4,9 +4,19 @@ using UnityEngine.Rendering;
 
 namespace UnityEngine.Experimental.Rendering.Universal
 {
+    /// <summary>
+    /// The queue type for the objects to render.
+    /// </summary>
     public enum RenderQueueType
     {
+        /// <summary>
+        /// Use this for opaque objects.
+        /// </summary>
         Opaque,
+
+        /// <summary>
+        /// Use this for transparent objects.
+        /// </summary>
         Transparent,
     }
 
@@ -25,6 +35,10 @@ namespace UnityEngine.Experimental.Rendering.Universal
 
             public Material overrideMaterial = null;
             public int overrideMaterialPassIndex = 0;
+            public Shader overrideShader = null;
+            public int overrideShaderPassIndex = 0;
+            public enum OverrideMaterialMode { None, Material, Shader };
+            public OverrideMaterialMode overrideMode = OverrideMaterialMode.Material; //default to Material as this was previously the only option
 
             public bool overrideDepthState = false;
             public CompareFunction depthCompareFunction = CompareFunction.LessEqual;
@@ -63,6 +77,7 @@ namespace UnityEngine.Experimental.Rendering.Universal
 
         RenderObjectsPass renderObjectsPass;
 
+        /// <inheritdoc/>
         public override void Create()
         {
             FilterSettings filter = settings.filterSettings;
@@ -78,8 +93,23 @@ namespace UnityEngine.Experimental.Rendering.Universal
             renderObjectsPass = new RenderObjectsPass(settings.passTag, settings.Event, filter.PassNames,
                 filter.RenderQueueType, filter.LayerMask, settings.cameraSettings);
 
-            renderObjectsPass.overrideMaterial = settings.overrideMaterial;
-            renderObjectsPass.overrideMaterialPassIndex = settings.overrideMaterialPassIndex;
+            switch (settings.overrideMode)
+            {
+                case RenderObjectsSettings.OverrideMaterialMode.None:
+                    renderObjectsPass.overrideMaterial = null;
+                    renderObjectsPass.overrideShader = null;
+                    break;
+                case RenderObjectsSettings.OverrideMaterialMode.Material:
+                    renderObjectsPass.overrideMaterial = settings.overrideMaterial;
+                    renderObjectsPass.overrideMaterialPassIndex = settings.overrideMaterialPassIndex;
+                    renderObjectsPass.overrideShader = null;
+                    break;
+                case RenderObjectsSettings.OverrideMaterialMode.Shader:
+                    renderObjectsPass.overrideMaterial = null;
+                    renderObjectsPass.overrideShader = settings.overrideShader;
+                    renderObjectsPass.overrideShaderPassIndex = settings.overrideShaderPassIndex;
+                    break;
+            }
 
             if (settings.overrideDepthState)
                 renderObjectsPass.SetDetphState(settings.enableWrite, settings.depthCompareFunction);
@@ -90,6 +120,7 @@ namespace UnityEngine.Experimental.Rendering.Universal
                     settings.stencilSettings.failOperation, settings.stencilSettings.zFailOperation);
         }
 
+        /// <inheritdoc/>
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
             renderer.EnqueuePass(renderObjectsPass);

@@ -152,28 +152,14 @@ namespace UnityEngine.Rendering.Universal
 
                 Camera camera = renderingData.cameraData.camera;
 
-                CommandBuffer cmd = CommandBufferPool.Get();
+                var cmd = renderingData.commandBuffer;
                 using (new ProfilingScope(cmd, m_ProfilingSampler))
                 {
-                    if (!renderingData.cameraData.xr.enabled)
-                    {
-                        cmd.SetViewProjectionMatrices(Matrix4x4.identity, Matrix4x4.identity);
-                        cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_Material);
-                        cmd.SetViewProjectionMatrices(camera.worldToCameraMatrix, camera.projectionMatrix);
-                    }
-                    else
-                    {
-                        // Avoid setting and restoring camera view and projection matrices when in stereo.
-                        cmd.Blit(null, m_RenderTarget.nameID, m_Material);
-                    }
-
+                    Blitter.BlitCameraTexture(cmd, m_RenderTarget, m_RenderTarget, m_Material, 0);
                     CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MainLightShadows, false);
                     CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MainLightShadowCascades, false);
                     CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MainLightShadowScreen, true);
                 }
-
-                context.ExecuteCommandBuffer(cmd);
-                CommandBufferPool.Release(cmd);
             }
         }
 
@@ -191,7 +177,7 @@ namespace UnityEngine.Rendering.Universal
 
             public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
             {
-                CommandBuffer cmd = CommandBufferPool.Get();
+                var cmd = renderingData.commandBuffer;
                 using (new ProfilingScope(cmd, m_ProfilingSampler))
                 {
                     ShadowData shadowData = renderingData.shadowData;
@@ -207,8 +193,6 @@ namespace UnityEngine.Rendering.Universal
                     CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MainLightShadows, receiveShadowsNoCascade);
                     CoreUtils.SetKeyword(cmd, ShaderKeywordStrings.MainLightShadowCascades, receiveShadowsCascades);
                 }
-                context.ExecuteCommandBuffer(cmd);
-                CommandBufferPool.Release(cmd);
             }
         }
     }
